@@ -178,6 +178,20 @@ def plot_ha_with_trend_arms(
                     x_coords = [dates[arm.start_idx], dates[arm.end_idx]]
                     y_coords = [arm.start_price, arm.end_price]
                     ax.plot(x_coords, y_coords, color='blue', linewidth=1.2, linestyle=':', zorder=9)
+                    
+                    # x-Koordinaten des Arms (Zeitachse)
+                    x0 = ha_data.at[arm.start_idx, "Zeit"]
+                    x1 = ha_data.at[arm.end_idx, "Zeit"]
+
+                    # FIB 38,2 % zeichnen – nur wenn vorhanden
+                    level = getattr(arm, "fib382", None)
+                    if level is not None:
+                        # Konvertiere Zeitstempel in Matplotlib-Datumformat
+                        x0_num = mdates.date2num(x0)
+                        x1_num = mdates.date2num(x1)
+                        ax.hlines(level, x0_num, x1_num, linestyles="dashed", linewidth=1, zorder=5, color='purple')
+                        ax.text(x1_num, level, "38.2%", va="bottom", ha="left", fontsize=8, zorder=6)
+                    
                     mid_x = (x_coords[0] + x_coords[1]) / 2
                     mid_y = (y_coords[0] + y_coords[1]) / 2
                     label = f"C{verbindung_count}"
