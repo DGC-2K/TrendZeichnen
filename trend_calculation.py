@@ -421,6 +421,54 @@ def kerzenfarbe(open_, close_):
         return "bearish"
     else:
         return "doji"
+def canonicalize_to_ha(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Setzt Open/High/Low/Close auf HA_* und bewahrt vorhandene Raw-OHLC als Raw_*.
+    Markiert den Frame als HA-Mode.
+    """
+    need = {"HA_Open", "HA_High", "HA_Low", "HA_Close"}
+    if not need.issubset(df.columns):
+        raise ValueError("canonicalize_to_ha erwartet HA_Open/HA_High/HA_Low/HA_Close im DataFrame.")
+
+    df = df.copy()
+    # Raw sichern, falls vorhanden (nur einmal anlegen)
+    for base in ("Open", "High", "Low", "Close"):
+        raw_col = f"Raw_{base}"
+        if base in df.columns and raw_col not in df.columns:
+            df[raw_col] = df[base]
+
+    # Kanonisieren: O/H/L/C = HA_*
+    df["Open"]  = df["HA_Open"]
+    df["High"]  = df["HA_High"]
+    df["Low"]   = df["HA_Low"]
+    df["Close"] = df["HA_Close"]
+
+    # Markierung
+    df.attrs["data_mode"] = "HA"
+    return df
+
+
+def require_ha_mode(df: pd.DataFrame) -> None:
+    """
+    Stellt sicher, dass Funktionen NUR mit HA arbeiten.
+    - data_mode == 'HA'
+    - Open/High/Low/Close identisch zu HA_*
+    """
+    if df is None or len(df) == 0:
+        raise ValueError("require_ha_mode: Leer/None DataFrame.")
+    if df.attrs.get("data_mode") != "HA":
+        raise ValueError("require_ha_mode: DataFrame nicht im HA-Mode. canonicalize_to_ha() zuerst aufrufen.")
+
+    need = {"HA_Open", "HA_High", "HA_Low", "HA_Close"}
+    if not need.issubset(df.columns):
+        raise ValueError("require_ha_mode: HA-Spalten fehlen.")
+
+    # Gleichheit prüfen (ohne NaN-Ärger)
+    if not (df["Open"].equals(df["HA_Open"]) and
+            df["High"].equals(df["HA_High"]) and
+            df["Low"].equals(df["HA_Low"]) and
+            df["Close"].equals(df["HA_Close"])):
+        raise ValueError("require_ha_mode: O/H/L/C sind nicht identisch zu HA_*. Pipeline verletzt das HA-only-Versprechen.")
 
 
  def remove_isolated_candles(df: pd.DataFrame) -> pd.DataFrame:
@@ -697,4 +745,5 @@ def dump_plot_arms_to_txt(plot_arms, prefix="Plot-Arms-Dump", filename=r"D:\Trad
         f.write(f"Anzahl Plot-Arms: {len(plot_arms)}\n")
 
         f.write("-" * 50 + "\n")
+
 
