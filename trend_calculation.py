@@ -423,23 +423,39 @@ def kerzenfarbe(open_, close_):
         return "doji"
 
 
-def remove_isolated_candles(df: pd.DataFrame) -> pd.DataFrame:
-    to_remove = []
-    for i in range(1, len(df) - 1):
-        prev_color = kerzenfarbe(df.iloc[i - 1]['Open'], df.iloc[i - 1]['Close'])
-        curr_color = kerzenfarbe(df.iloc[i]['Open'], df.iloc[i]['Close'])
-        next_color = kerzenfarbe(df.iloc[i + 1]['Open'], df.iloc[i + 1]['Close'])
+ def remove_isolated_candles(df: pd.DataFrame) -> pd.DataFrame:
+-    # HA-first: wenn HA-Spalten vorhanden sind, diese verwenden
+-    if {"HA_Open", "HA_Close"}.issubset(df.columns):
+-        o_col, c_col = "HA_Open", "HA_Close"
+-    else:
+-        o_col, c_col = "Open", "Close"
++    # Guards
++    if df is None or len(df) < 3:
++        return df.reset_index(drop=True) if isinstance(df, pd.DataFrame) else df
++
++    # Primär HA – Fallback auf klassische OHLC, mit einmaligem Hinweis
++    if {"HA_Open", "HA_Close"}.issubset(df.columns):
++        o_col, c_col = "HA_Open", "HA_Close"
++    elif {"Open", "Close"}.issubset(df.columns):
++        o_col, c_col = "Open", "Close"
++        print("ℹ️ remove_isolated_candles: HA_Open/HA_Close nicht gefunden – Fallback auf Open/Close.")
++    else:
++        raise ValueError("remove_isolated_candles benötigt entweder HA_Open/HA_Close oder Open/Close.")
+ 
+     to_remove = []
+     for i in range(1, len(df) - 1):
+         prev_color = kerzenfarbe(df.iloc[i - 1][o_col], df.iloc[i - 1][c_col])
+         curr_color = kerzenfarbe(df.iloc[i][o_col], df.iloc[i][c_col])
+         next_color = kerzenfarbe(df.iloc[i + 1][o_col], df.iloc[i + 1][c_col])
+@@
+             if avg_neighbor_body > 0 and curr_body <= 0.06 * avg_neighbor_body:
+                 to_remove.append(i)
+ 
+-    return df.drop(df.index[to_remove]).reset_index(drop=True)
++    if to_remove:
++        df = df.drop(df.index[to_remove])
++    return df.reset_index(drop=True)
 
-        if prev_color == next_color and curr_color != prev_color:
-            prev_body = abs(df.iloc[i - 1]['Open'] - df.iloc[i - 1]['Close'])
-            curr_body = abs(df.iloc[i]['Open'] - df.iloc[i]['Close'])
-            next_body = abs(df.iloc[i + 1]['Open'] - df.iloc[i + 1]['Close'])
-            avg_neighbor_body = (prev_body + next_body) / 2.0
-
-            if avg_neighbor_body > 0 and curr_body <= 0.06 * avg_neighbor_body:
-                to_remove.append(i)
-
-    return df.drop(df.index[to_remove]).reset_index(drop=True)
 
 
 def detect_trend_arms(ha_data: pd.DataFrame) -> List[ArmConnection]:
@@ -650,4 +666,5 @@ def dump_plot_arms_to_txt(plot_arms, prefix="Plot-Arms-Dump", filename=r"D:\Trad
             )
         f.write("-" * 50 + "\n")
         f.write(f"Anzahl Plot-Arms: {len(plot_arms)}\n")
+
         f.write("-" * 50 + "\n")
