@@ -216,7 +216,7 @@ class ArmContainer:
         debug_path = r"D:\TradingBot\output\C-Serie-Debug-Ausgaben4.txt"
 
         with open(debug_path, "a", encoding="utf-8") as dbgfile:
-            dbgfile.write(f"\n[INPUT] Validated Arms für update_plot_arms ({datetime.datetime.now().isoformat()}):\n")
+            dbgfile.write(f"\n[INPUT] Validated Arms fÃ¼r update_plot_arms ({datetime.datetime.now().isoformat()}):\n")
             for i, v in enumerate(validated_arms):
                 dbgfile.write(f"  B{i+1}: {v.start_idx}-{v.end_idx}, Richtung: {v.direction}, validated: {v.validated}\n")
             dbgfile.write("-" * 50 + "\n")
@@ -343,7 +343,7 @@ class ArmContainer:
 
     def _update_bounds(self, arm: ArmConnection, data: pd.DataFrame) -> None:
         if arm.end_idx >= len(data) or arm.start_idx >= len(data):
-            print(f"?? Warnung: _update_bounds erhielt Arm {arm.arm_num} mit ungültigen Indizes. Bounds nicht aktualisiert.")
+            print(f"?? Warnung: _update_bounds erhielt Arm {arm.arm_num} mit ungÃ¼ltigen Indizes. Bounds nicht aktualisiert.")
             return
 
         arm_data = data.iloc[arm.start_idx:arm.end_idx + 1]
@@ -365,7 +365,7 @@ def calculate_ha(data: pd.DataFrame) -> pd.DataFrame:
             data[col] = pd.to_numeric(data[col], errors='coerce')
             data.dropna(subset=[col], inplace=True)
             if data.empty:
-                raise ValueError(f"Daten nach Konvertierung leer für Spalte: '{col}'")
+                raise ValueError(f"Daten nach Konvertierung leer fÃ¼r Spalte: '{col}'")
 
     open_p = data['Open'].values
     high_p = data['High'].values
@@ -413,6 +413,43 @@ def calculate_ha(data: pd.DataFrame) -> pd.DataFrame:
         result_df['Zeit'] = data['Zeit']
 
     return result_df
+def compute_fib382_for_arms(df: pd.DataFrame, arms: list):
+    """
+    Berechnet fÃ¼r jeden Arm das 38,2%-Retracement-Level bezogen auf die Arm-Spanne.
+    - Erwartet HA-Mode (require_ha_mode)
+    - Schreibt arm.fib382 (float) oder None
+    - Gibt eine Liste einfacher Dicts (arm_idx, start_idx, end_idx, level) zurÃ¼ck
+    """
+    require_ha_mode(df)
+
+    out = []
+    for idx, arm in enumerate(arms):
+        # kompatibel zu deiner ArmConnection: start_idx, extreme_idx, start_price, extreme_price, trend ('UP'/'DOWN')
+        s_idx = getattr(arm, "start_idx", None)
+        e_idx = getattr(arm, "end_idx", getattr(arm, "extreme_idx", None))
+        sp    = float(getattr(arm, "start_price", float("nan")))
+        ep    = float(getattr(arm, "extreme_price", float("nan")))
+        trend = getattr(arm, "trend", getattr(arm, "current_trend", None))
+
+        if s_idx is None or e_idx is None or e_idx <= s_idx:
+            level = None
+        else:
+            low, high = (min(sp, ep), max(sp, ep))
+            rng = high - low
+            if rng <= 0 or trend not in ("UP", "DOWN"):
+                level = None
+            else:
+                level = (high - 0.382 * rng) if trend == "UP" else (low + 0.382 * rng)
+
+        # am Arm ablegen (non-breaking)
+        try:
+            setattr(arm, "fib382", None if level is None else float(level))
+        except Exception:
+            pass
+
+        out.append({"arm_idx": idx, "start_idx": s_idx, "end_idx": e_idx, "level": level})
+
+    return out
 
 
 def kerzenfarbe(open_, close_):
@@ -466,7 +503,7 @@ def require_ha_mode(df: pd.DataFrame) -> None:
     if not need.issubset(df.columns):
         raise ValueError("require_ha_mode: HA-Spalten fehlen.")
 
-    # Gleichheit prüfen (ohne NaN-Ärger)
+    # Gleichheit prÃ¼fen (ohne NaN-Ã„rger)
     if not (df["Open"].equals(df["HA_Open"]) and
             df["High"].equals(df["HA_High"]) and
             df["Low"].equals(df["HA_Low"]) and
@@ -479,14 +516,14 @@ def remove_isolated_candles(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or len(df) < 3:
         return df.reset_index(drop=True) if isinstance(df, pd.DataFrame) else df
 
-    # Primär HA – Fallback auf klassische OHLC, mit einmaligem Hinweis
+    # PrimÃ¤r HA Â– Fallback auf klassische OHLC, mit einmaligem Hinweis
     if {"HA_Open", "HA_Close"}.issubset(df.columns):
         o_col, c_col = "HA_Open", "HA_Close"
     elif {"Open", "Close"}.issubset(df.columns):
         o_col, c_col = "Open", "Close"
-        print("?? remove_isolated_candles: HA_Open/HA_Close nicht gefunden – Fallback auf Open/Close.")
+        print("?? remove_isolated_candles: HA_Open/HA_Close nicht gefunden Â– Fallback auf Open/Close.")
     else:
-        raise ValueError("remove_isolated_candles benötigt entweder HA_Open/HA_Close oder Open/Close.")
+        raise ValueError("remove_isolated_candles benÃ¶tigt entweder HA_Open/HA_Close oder Open/Close.")
 
     to_remove = []
     for i in range(1, len(df) - 1):
@@ -509,7 +546,7 @@ def remove_isolated_candles(df: pd.DataFrame) -> pd.DataFrame:
 
 def count_isolated_ha_candles(df: pd.DataFrame) -> int:
     """
-    Zählt verbleibende isolierte HA-Kerzen (gleiches Kriterium wie remove_isolated_candles).
+    ZÃ¤hlt verbleibende isolierte HA-Kerzen (gleiches Kriterium wie remove_isolated_candles).
     Erwartet 0 nach erfolgreichem Cleanup.
     """
     if df is None or len(df) < 3:
@@ -520,7 +557,7 @@ def count_isolated_ha_candles(df: pd.DataFrame) -> int:
     elif {"Open", "Close"}.issubset(df.columns):
         o_col, c_col = "Open", "Close"
     else:
-        raise ValueError("count_isolated_ha_candles benötigt HA_Open/HA_Close oder Open/Close.")
+        raise ValueError("count_isolated_ha_candles benÃ¶tigt HA_Open/HA_Close oder Open/Close.")
 
     cnt = 0
     for i in range(1, len(df) - 1):
@@ -558,7 +595,7 @@ def detect_trend_arms(ha_data: pd.DataFrame) -> List[ArmConnection]:
         candle = ha_data.iloc[i]
 
         if not all(col in candle for col in ['Trend', 'High', 'Low']):
-            print(f"?? Warnung: Fehlende Spalten in HA-Kerze bei Index {i}. Überspringe.")
+            print(f"?? Warnung: Fehlende Spalten in HA-Kerze bei Index {i}. Ãœberspringe.")
             continue
 
         trend = candle['Trend']
@@ -661,7 +698,7 @@ def berechne_verbindungslinien(validated_arms, data):
         b_idx_pos = arm_i.end_idx
         c_idx_pos = arm_j.end_idx
 
-        # 1) Aufwärtsfall: A < B < C
+        # 1) AufwÃ¤rtsfall: A < B < C
         if A < B < C:
             # Tiefster Punkt (Low) zwischen B und C (exklusive B und C)
             if b_idx_pos + 1 < c_idx_pos:
@@ -677,9 +714,9 @@ def berechne_verbindungslinien(validated_arms, data):
                             'typ': 'B-D-C'
                         })
 
-        # 2) Abwärtsfall: A > B > C
+        # 2) AbwÃ¤rtsfall: A > B > C
         elif A > B > C:
-            # Höchster Punkt (High) zwischen B und C (exklusive B und C)
+            # HÃ¶chster Punkt (High) zwischen B und C (exklusive B und C)
             if b_idx_pos + 1 < c_idx_pos:
                 idx_bis_c = data.index[(data.index > b_idx_pos) & (data.index < c_idx_pos)]
                 if not idx_bis_c.empty:
@@ -746,5 +783,6 @@ def dump_plot_arms_to_txt(plot_arms, prefix="Plot-Arms-Dump", filename=r"D:\Trad
             )
         f.write("-" * 50 + "\n")
         f.write(f"Anzahl Plot-Arms: {len(plot_arms)}\n")
+
 
         f.write("-" * 50 + "\n")
