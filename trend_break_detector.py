@@ -1,28 +1,30 @@
+﻿# -*- coding: utf-8 -*-
+
 import pandas as pd
 
 class TrendBreakDetector:
     @staticmethod
     def detect_trend_break_and_restart(container, ha_data: pd.DataFrame) -> None:
         """
-        Untersucht Trendbrüche und startet neue Trendarme
+        Untersucht TrendbrÃ¼che und startet neue Trendarme
         :param container: ArmContainer-Instanz
         :param ha_data: Heikin-Ashi Daten
         """
         debug_path = r"D:\TradingBot\output\C-Serie-Debug-Ausgaben200.txt"
         
-        # === PRÜFCODE BEGINN ===
+        # === PRÃœFCODE BEGINN ===
         with open(debug_path, "a", encoding="utf-8") as dbgfile:
-            dbgfile.write("\n--- PRÜFCODE: Plot-Arms (C-Serie) ---\n")
+            dbgfile.write("\n--- PRÃœFCODE: Plot-Arms (C-Serie) ---\n")
             for idx, c_arm in enumerate(container.plot_arms, start=1):
                 dbgfile.write(
                     f"  C{idx}: start_idx={c_arm.start_idx}, end_idx={c_arm.end_idx}, Richtung: {c_arm.direction}, broken: {c_arm.broken}, validated: {c_arm.validated}\n"
                 )
             dbgfile.write(f"Anzahl Plot-Arms: {len(container.plot_arms)}\n")
-            dbgfile.write(f"DataFrame-Länge: {len(ha_data)}; Indizes: {ha_data.index[0]} bis {ha_data.index[-1]}\n")
-            dbgfile.write("--- PRÜFCODE ENDE ---\n")
-        # === PRÜFCODE ENDE ===
+            dbgfile.write(f"DataFrame-LÃ¤nge: {len(ha_data)}; Indizes: {ha_data.index[0]} bis {ha_data.index[-1]}\n")
+            dbgfile.write("--- PRÃœFCODE ENDE ---\n")
+        # === PRÃœFCODE ENDE ===
 
-        # Debug-Ausgabe für den aktuellen Stand der C-Serie
+        # Debug-Ausgabe fÃ¼r den aktuellen Stand der C-Serie
         with open(debug_path, "a", encoding="utf-8") as dbgfile:
             import datetime
             dt = datetime.datetime.now()
@@ -76,7 +78,7 @@ class TrendBreakDetector:
         else:
             return
 
-        # Prüfe ALLE Close-Werte nach dem letzten validierten C-Arm
+        # PrÃ¼fe ALLE Close-Werte nach dem letzten validierten C-Arm
         candle_start = last_validated_arm.end_idx + 1
         closes = [float(ha_data.iloc[i]['Close']) for i in range(candle_start, len(ha_data))]
         debug_closes = closes[:20]

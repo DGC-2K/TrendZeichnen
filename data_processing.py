@@ -1,4 +1,6 @@
-﻿import pandas as pd
+﻿# -*- coding: utf-8 -*-
+
+import pandas as pd
 import yfinance as yf
 from pandas.api import types as pd_types
 from datetime import datetime, timedelta

@@ -1,15 +1,15 @@
-import os
+﻿import os
 import pandas as pd
 from typing import Tuple, List
 from trend_calculation import calculate_ha, detect_trend_arms, remove_isolated_candles
 
 def workflow_pipeline(rohdaten: pd.DataFrame) -> Tuple[pd.DataFrame, List]:
     """
-    Führt den gesamten Workflow aus, schreibt Debug-CSV-Ausgaben und gibt
-    die berechneten Heikin-Ashi-Daten und die Trendarme zurück.
+    FÃ¼hrt den gesamten Workflow aus, schreibt Debug-CSV-Ausgaben und gibt
+    die berechneten Heikin-Ashi-Daten und die Trendarme zurÃ¼ck.
     """
 
-    # Basispfad für Debug/CSV-Dateien
+    # Basispfad fÃ¼r Debug/CSV-Dateien
     base_csv = r"D:\TradingBot\output\HA_Kerzen_Kontroll.csv"
     base, ext = os.path.splitext(base_csv)
     os.makedirs(os.path.dirname(base_csv), exist_ok=True)
@@ -25,7 +25,7 @@ def workflow_pipeline(rohdaten: pd.DataFrame) -> Tuple[pd.DataFrame, List]:
     ha_before = ha_data.copy()
     ha_before.head(50).to_csv(f"{base}_vor_remove_isolated_candles{ext}", index=False)
 
-    # 4. remove_isolated_candles ausführen
+    # 4. remove_isolated_candles ausfÃ¼hren
     ha_data = remove_isolated_candles(ha_data)
     ha_data.head(50).to_csv(f"{base}_nach_remove_isolated_candles{ext}", index=False)
 

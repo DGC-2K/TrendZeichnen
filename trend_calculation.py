@@ -1,4 +1,6 @@
-Ôªøimport pandas as pd
+# -*- coding: utf-8 -*-
+
+import pandas as pd
 import numpy as np
 from typing import List, Tuple, Optional
 import os
@@ -214,11 +216,10 @@ class ArmContainer:
         debug_path = r"D:\TradingBot\output\C-Serie-Debug-Ausgaben4.txt"
 
         with open(debug_path, "a", encoding="utf-8") as dbgfile:
-            dbgfile.write(f"\n[INPUT] Validated Arms f√ºr update_plot_arms ({datetime.datetime.now().isoformat()}):\n")
+            dbgfile.write(f"\n[INPUT] Validated Arms f¸r update_plot_arms ({datetime.datetime.now().isoformat()}):\n")
             for i, v in enumerate(validated_arms):
                 dbgfile.write(f"  B{i+1}: {v.start_idx}-{v.end_idx}, Richtung: {v.direction}, validated: {v.validated}\n")
             dbgfile.write("-" * 50 + "\n")
-
 
         for verbindung in verbindungen_liste:
             start_idx, start_price = verbindung['start']
@@ -234,7 +235,6 @@ class ArmContainer:
                 end_price=end_price,
                 validated=True
             )
-
 
             if 'mitte' in verbindung:
                 mid_idx, mid_price = verbindung['mitte']
@@ -261,7 +261,7 @@ class ArmContainer:
 
     def validate_arms(self, ha_data: pd.DataFrame) -> None:
         if ha_data.empty or not self.arms:
-            print("‚ö†Ô∏è Warnung: Keine Daten oder Arme vorhanden.")
+            print("?? Warnung: Keine Daten oder Arme vorhanden.")
             return
 
         with self._lock:
@@ -317,6 +317,7 @@ class ArmContainer:
             dump_plot_arms_to_txt(self.plot_arms, prefix="Vor Trendbruch-Check", filename=r"D:\TradingBot\output\DumpPA2.txt")
             TrendBreakDetector.detect_trend_break_and_restart(self, ha_data)
             dump_plot_arms_to_txt(self.plot_arms, prefix="Nach Trendbruch-Check", filename=r"D:\TradingBot\output\DumpPA2.txt")
+
     def _adjust_bounds_to_candle_extremes(self, ha_data: pd.DataFrame, target_idx: int, debug_file) -> None:
         if target_idx >= len(ha_data):
             return
@@ -342,7 +343,7 @@ class ArmContainer:
 
     def _update_bounds(self, arm: ArmConnection, data: pd.DataFrame) -> None:
         if arm.end_idx >= len(data) or arm.start_idx >= len(data):
-            print(f"‚ö†Ô∏è Warnung: _update_bounds erhielt Arm {arm.arm_num} mit ung√ºltigen Indizes. Bounds nicht aktualisiert.")
+            print(f"?? Warnung: _update_bounds erhielt Arm {arm.arm_num} mit ung¸ltigen Indizes. Bounds nicht aktualisiert.")
             return
 
         arm_data = data.iloc[arm.start_idx:arm.end_idx + 1]
@@ -353,7 +354,7 @@ class ArmContainer:
 
 def calculate_ha(data: pd.DataFrame) -> pd.DataFrame:
     if data.empty:
-        print("‚ö†Ô∏è Warnung: calculate_ha wurde mit leeren Daten aufgerufen.")
+        print("?? Warnung: calculate_ha wurde mit leeren Daten aufgerufen.")
         return pd.DataFrame()
 
     required_cols = ['Open', 'High', 'Low', 'Close']
@@ -364,7 +365,7 @@ def calculate_ha(data: pd.DataFrame) -> pd.DataFrame:
             data[col] = pd.to_numeric(data[col], errors='coerce')
             data.dropna(subset=[col], inplace=True)
             if data.empty:
-                raise ValueError(f"Daten nach Konvertierung leer f√ºr Spalte: '{col}'")
+                raise ValueError(f"Daten nach Konvertierung leer f¸r Spalte: '{col}'")
 
     open_p = data['Open'].values
     high_p = data['High'].values
@@ -421,6 +422,8 @@ def kerzenfarbe(open_, close_):
         return "bearish"
     else:
         return "doji"
+
+
 def canonicalize_to_ha(df: pd.DataFrame) -> pd.DataFrame:
     """
     Setzt Open/High/Low/Close auf HA_* und bewahrt vorhandene Raw-OHLC als Raw_*.
@@ -463,7 +466,7 @@ def require_ha_mode(df: pd.DataFrame) -> None:
     if not need.issubset(df.columns):
         raise ValueError("require_ha_mode: HA-Spalten fehlen.")
 
-    # Gleichheit pr√ºfen (ohne NaN-√Ñrger)
+    # Gleichheit pr¸fen (ohne NaN-ƒrger)
     if not (df["Open"].equals(df["HA_Open"]) and
             df["High"].equals(df["HA_High"]) and
             df["Low"].equals(df["HA_Low"]) and
@@ -471,42 +474,42 @@ def require_ha_mode(df: pd.DataFrame) -> None:
         raise ValueError("require_ha_mode: O/H/L/C sind nicht identisch zu HA_*. Pipeline verletzt das HA-only-Versprechen.")
 
 
- def remove_isolated_candles(df: pd.DataFrame) -> pd.DataFrame:
--    # HA-first: wenn HA-Spalten vorhanden sind, diese verwenden
--    if {"HA_Open", "HA_Close"}.issubset(df.columns):
--        o_col, c_col = "HA_Open", "HA_Close"
--    else:
--        o_col, c_col = "Open", "Close"
-+    # Guards
-+    if df is None or len(df) < 3:
-+        return df.reset_index(drop=True) if isinstance(df, pd.DataFrame) else df
-+
-+    # Prim√§r HA ‚Äì Fallback auf klassische OHLC, mit einmaligem Hinweis
-+    if {"HA_Open", "HA_Close"}.issubset(df.columns):
-+        o_col, c_col = "HA_Open", "HA_Close"
-+    elif {"Open", "Close"}.issubset(df.columns):
-+        o_col, c_col = "Open", "Close"
-+        print("‚ÑπÔ∏è remove_isolated_candles: HA_Open/HA_Close nicht gefunden ‚Äì Fallback auf Open/Close.")
-+    else:
-+        raise ValueError("remove_isolated_candles ben√∂tigt entweder HA_Open/HA_Close oder Open/Close.")
- 
-     to_remove = []
-     for i in range(1, len(df) - 1):
-         prev_color = kerzenfarbe(df.iloc[i - 1][o_col], df.iloc[i - 1][c_col])
-         curr_color = kerzenfarbe(df.iloc[i][o_col], df.iloc[i][c_col])
-         next_color = kerzenfarbe(df.iloc[i + 1][o_col], df.iloc[i + 1][c_col])
-@@
-             if avg_neighbor_body > 0 and curr_body <= 0.06 * avg_neighbor_body:
-                 to_remove.append(i)
- 
--    return df.drop(df.index[to_remove]).reset_index(drop=True)
-+    if to_remove:
-+        df = df.drop(df.index[to_remove])
-+    return df.reset_index(drop=True)
+def remove_isolated_candles(df: pd.DataFrame) -> pd.DataFrame:
+    # Guards
+    if df is None or len(df) < 3:
+        return df.reset_index(drop=True) if isinstance(df, pd.DataFrame) else df
+
+    # Prim‰r HA ñ Fallback auf klassische OHLC, mit einmaligem Hinweis
+    if {"HA_Open", "HA_Close"}.issubset(df.columns):
+        o_col, c_col = "HA_Open", "HA_Close"
+    elif {"Open", "Close"}.issubset(df.columns):
+        o_col, c_col = "Open", "Close"
+        print("?? remove_isolated_candles: HA_Open/HA_Close nicht gefunden ñ Fallback auf Open/Close.")
+    else:
+        raise ValueError("remove_isolated_candles benˆtigt entweder HA_Open/HA_Close oder Open/Close.")
+
+    to_remove = []
+    for i in range(1, len(df) - 1):
+        prev_color = kerzenfarbe(df.iloc[i - 1][o_col], df.iloc[i - 1][c_col])
+        curr_color = kerzenfarbe(df.iloc[i][o_col], df.iloc[i][c_col])
+        next_color = kerzenfarbe(df.iloc[i + 1][o_col], df.iloc[i + 1][c_col])
+
+        if prev_color == next_color and curr_color != prev_color:
+            prev_body = abs(df.iloc[i - 1][o_col] - df.iloc[i - 1][c_col])
+            curr_body = abs(df.iloc[i][o_col] - df.iloc[i][c_col])
+            next_body = abs(df.iloc[i + 1][o_col] - df.iloc[i + 1][c_col])
+            avg_neighbor_body = (prev_body + next_body) / 2.0
+            if avg_neighbor_body > 0 and curr_body <= 0.06 * avg_neighbor_body:
+                to_remove.append(i)
+
+    if to_remove:
+        df = df.drop(df.index[to_remove])
+    return df.reset_index(drop=True)
+
 
 def count_isolated_ha_candles(df: pd.DataFrame) -> int:
     """
-    Z√§hlt verbleibende isolierte HA-Kerzen (gleiches Kriterium wie remove_isolated_candles).
+    Z‰hlt verbleibende isolierte HA-Kerzen (gleiches Kriterium wie remove_isolated_candles).
     Erwartet 0 nach erfolgreichem Cleanup.
     """
     if df is None or len(df) < 3:
@@ -517,7 +520,7 @@ def count_isolated_ha_candles(df: pd.DataFrame) -> int:
     elif {"Open", "Close"}.issubset(df.columns):
         o_col, c_col = "Open", "Close"
     else:
-        raise ValueError("count_isolated_ha_candles ben√∂tigt HA_Open/HA_Close oder Open/Close.")
+        raise ValueError("count_isolated_ha_candles benˆtigt HA_Open/HA_Close oder Open/Close.")
 
     cnt = 0
     for i in range(1, len(df) - 1):
@@ -537,7 +540,7 @@ def count_isolated_ha_candles(df: pd.DataFrame) -> int:
 
 def detect_trend_arms(ha_data: pd.DataFrame) -> List[ArmConnection]:
     if ha_data.empty:
-        print("‚ö†Ô∏è Warnung: detect_trend_arms wurde mit leeren HA-Daten aufgerufen.")
+        print("?? Warnung: detect_trend_arms wurde mit leeren HA-Daten aufgerufen.")
         return []
 
     if len(ha_data) < 1:
@@ -555,7 +558,7 @@ def detect_trend_arms(ha_data: pd.DataFrame) -> List[ArmConnection]:
         candle = ha_data.iloc[i]
 
         if not all(col in candle for col in ['Trend', 'High', 'Low']):
-            print(f"‚ö†Ô∏è Warnung: Fehlende Spalten in HA-Kerze bei Index {i}. √úberspringe.")
+            print(f"?? Warnung: Fehlende Spalten in HA-Kerze bei Index {i}. ‹berspringe.")
             continue
 
         trend = candle['Trend']
@@ -658,7 +661,7 @@ def berechne_verbindungslinien(validated_arms, data):
         b_idx_pos = arm_i.end_idx
         c_idx_pos = arm_j.end_idx
 
-        # 1) Aufw√§rtsfall: A < B < C
+        # 1) Aufw‰rtsfall: A < B < C
         if A < B < C:
             # Tiefster Punkt (Low) zwischen B und C (exklusive B und C)
             if b_idx_pos + 1 < c_idx_pos:
@@ -674,9 +677,9 @@ def berechne_verbindungslinien(validated_arms, data):
                             'typ': 'B-D-C'
                         })
 
-        # 2) Abw√§rtsfall: A > B > C
+        # 2) Abw‰rtsfall: A > B > C
         elif A > B > C:
-            # H√∂chster Punkt (High) zwischen B und C (exklusive B und C)
+            # Hˆchster Punkt (High) zwischen B und C (exklusive B und C)
             if b_idx_pos + 1 < c_idx_pos:
                 idx_bis_c = data.index[(data.index > b_idx_pos) & (data.index < c_idx_pos)]
                 if not idx_bis_c.empty:
@@ -745,5 +748,3 @@ def dump_plot_arms_to_txt(plot_arms, prefix="Plot-Arms-Dump", filename=r"D:\Trad
         f.write(f"Anzahl Plot-Arms: {len(plot_arms)}\n")
 
         f.write("-" * 50 + "\n")
-
-

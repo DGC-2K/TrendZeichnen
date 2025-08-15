@@ -1,3 +1,5 @@
+﻿# -*- coding: utf-8 -*-
+
 import datetime
 from trend_calculation import berechne_verbindungslinien, ArmConnection
 
@@ -13,7 +15,7 @@ class ArmPlotManager:
 
         # Debug-Eingangszustand
         with open(self.debug_path, "a", encoding="utf-8") as dbgfile:
-            dbgfile.write(f"\n[INPUT] Validated Arms für update_plot_arms ({datetime.datetime.now().isoformat()}):\n")
+            dbgfile.write(f"\n[INPUT] Validated Arms fÃ¼r update_plot_arms ({datetime.datetime.now().isoformat()}):\n")
             for i, v in enumerate(validated_arms):
                 dbgfile.write(f"  B{i+1}: {v.start_idx}-{v.end_idx}, Richtung: {v.direction}, validated: {v.validated}\n")
             dbgfile.write("-" * 50 + "\n")
@@ -34,7 +36,7 @@ class ArmPlotManager:
                 validated=True
             )
 
-            # Optional: Mitte für spezielle Verbindungstypen
+            # Optional: Mitte fÃ¼r spezielle Verbindungstypen
             if 'mitte' in verbindung:
                 mid_idx, mid_price = verbindung['mitte']
                 if direction == 'UP':
