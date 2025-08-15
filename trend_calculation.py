@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 
 import pandas as pd
 import numpy as np
@@ -413,43 +413,6 @@ def calculate_ha(data: pd.DataFrame) -> pd.DataFrame:
         result_df['Zeit'] = data['Zeit']
 
     return result_df
-def compute_fib382_for_arms(df: pd.DataFrame, arms: list):
-    """
-    Berechnet für jeden Arm das 38,2%-Retracement-Level bezogen auf die Arm-Spanne.
-    - Erwartet HA-Mode (require_ha_mode)
-    - Schreibt arm.fib382 (float) oder None
-    - Gibt eine Liste einfacher Dicts (arm_idx, start_idx, end_idx, level) zurück
-    """
-    require_ha_mode(df)
-
-    out = []
-    for idx, arm in enumerate(arms):
-        # kompatibel zu deiner ArmConnection: start_idx, extreme_idx, start_price, extreme_price, trend ('UP'/'DOWN')
-        s_idx = getattr(arm, "start_idx", None)
-        e_idx = getattr(arm, "end_idx", getattr(arm, "extreme_idx", None))
-        sp    = float(getattr(arm, "start_price", float("nan")))
-        ep    = float(getattr(arm, "extreme_price", float("nan")))
-        trend = getattr(arm, "trend", getattr(arm, "current_trend", None))
-
-        if s_idx is None or e_idx is None or e_idx <= s_idx:
-            level = None
-        else:
-            low, high = (min(sp, ep), max(sp, ep))
-            rng = high - low
-            if rng <= 0 or trend not in ("UP", "DOWN"):
-                level = None
-            else:
-                level = (high - 0.382 * rng) if trend == "UP" else (low + 0.382 * rng)
-
-        # am Arm ablegen (non-breaking)
-        try:
-            setattr(arm, "fib382", None if level is None else float(level))
-        except Exception:
-            pass
-
-        out.append({"arm_idx": idx, "start_idx": s_idx, "end_idx": e_idx, "level": level})
-
-    return out
 
 
 def kerzenfarbe(open_, close_):
@@ -460,55 +423,151 @@ def kerzenfarbe(open_, close_):
     else:
         return "doji"
 
+def remove_micro_flip_candles(
+    df: pd.DataFrame,
+    body_ratio: float = 0.20,   # α
+    range_ratio: float = 0.50,  # β
+    verbose: bool = False
+) -> pd.DataFrame:
+    """
+    Entfernt winzige 'Brücken-Kerzen' am Farbwechsel:
+      - prev_color != next_color
+      - Body_i ist sehr klein relativ zu den Nachbarn (≤ body_ratio)
+      - Range_i ist klein relativ zu den Nachbarn (≤ range_ratio)
+      - Kerze setzt kein neues Hoch/Tief ggü. beiden Nachbarn
+    Erwartet: require_ha_mode(df) wurde bereits aufgerufen (O/H/L/C = HA_*).
+    """
+    require_ha_mode(df)
+    n = len(df)
+    if n < 3:
+        return df.reset_index(drop=True)
+
+    to_remove = []
+    for i in range(1, n - 1):
+        prev = df.iloc[i - 1]; curr = df.iloc[i]; nxt = df.iloc[i + 1]
+
+        prev_color = kerzenfarbe(prev["Open"], prev["Close"])
+        curr_color = kerzenfarbe(curr["Open"], curr["Close"])
+        next_color = kerzenfarbe(nxt["Open"], nxt["Close"])
+
+        # 1) Farbwechsel-Brücke
+        if prev_color == next_color:
+            continue  # dafür ist remove_isolated_candles zuständig
+
+        # 2) Mini-Body (gegen Nachbarn)
+        body_prev = abs(prev["Open"] - prev["Close"])
+        body_curr = abs(curr["Open"] - curr["Close"])
+        body_next = abs(nxt["Open"] - nxt["Close"])
+        avg_body_neighbors = (body_prev + body_next) / 2.0
+
+        if avg_body_neighbors <= 0 or body_curr > body_ratio * avg_body_neighbors:
+            continue
+
+        # 3) Kleine Range (gegen Nachbarn)
+        range_prev = prev["High"] - prev["Low"]
+        range_curr = curr["High"] - curr["Low"]
+        range_next = nxt["High"] - nxt["Low"]
+        avg_range_neighbors = (range_prev + range_next) / 2.0
+
+        if avg_range_neighbors <= 0 or range_curr > range_ratio * avg_range_neighbors:
+            continue
+
+        # 4) Kein neues Extrem
+        if (curr["High"] <= max(prev["High"], nxt["High"])
+            and curr["Low"]  >= min(prev["Low"],  nxt["Low"])):
+            to_remove.append(i)
+
+    if verbose and to_remove:
+        print(f"🧹 remove_micro_flip_candles: entferne Indizes {to_remove}")
+
+    if to_remove:
+        df = df.drop(df.index[to_remove])
+
+    return df.reset_index(drop=True)
+
 
 def canonicalize_to_ha(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Setzt Open/High/Low/Close auf HA_* und bewahrt vorhandene Raw-OHLC als Raw_*.
-    Markiert den Frame als HA-Mode.
+    Setzt Open/High/Low/Close auf HA_* und sorgt dafür, dass HA_* existieren.
+    Falls HA_* fehlen, werden sie aus den vorhandenen O/H/L/C gespiegelt.
+    Sichert bestehende O/H/L/C einmalig in Raw_*.
     """
-    need = {"HA_Open", "HA_High", "HA_Low", "HA_Close"}
-    if not need.issubset(df.columns):
-        raise ValueError("canonicalize_to_ha erwartet HA_Open/HA_High/HA_Low/HA_Close im DataFrame.")
-
     df = df.copy()
-    # Raw sichern, falls vorhanden (nur einmal anlegen)
-    for base in ("Open", "High", "Low", "Close"):
-        raw_col = f"Raw_{base}"
-        if base in df.columns and raw_col not in df.columns:
-            df[raw_col] = df[base]
+    ohlc = ("Open", "High", "Low", "Close")
+    ha   = ("HA_Open", "HA_High", "HA_Low", "HA_Close")
 
-    # Kanonisieren: O/H/L/C = HA_*
+    # Falls HA_* fehlen: aus O/H/L/C erzeugen
+    if not all(col in df.columns for col in ha):
+        if not all(col in df.columns for col in ohlc):
+            raise ValueError("canonicalize_to_ha: O/H/L/C fehlen – kann HA nicht kanonisieren.")
+        df["HA_Open"]  = df["Open"]
+        df["HA_High"]  = df["High"]
+        df["HA_Low"]   = df["Low"]
+        df["HA_Close"] = df["Close"]
+
+    # Raw_* sichern (nur einmal)
+    for base in ohlc:
+        raw = f"Raw_{base}"
+        if base in df.columns and raw not in df.columns:
+            df[raw] = df[base]
+
+    # O/H/L/C auf HA_* setzen (ab hier sind O/H/L/C garantiert HA)
     df["Open"]  = df["HA_Open"]
     df["High"]  = df["HA_High"]
     df["Low"]   = df["HA_Low"]
     df["Close"] = df["HA_Close"]
 
-    # Markierung
     df.attrs["data_mode"] = "HA"
     return df
 
 
-def require_ha_mode(df: pd.DataFrame) -> None:
+
+def require_ha_mode(df: pd.DataFrame, auto_fix: bool = True) -> None:
     """
-    Stellt sicher, dass Funktionen NUR mit HA arbeiten.
-    - data_mode == 'HA'
-    - Open/High/Low/Close identisch zu HA_*
+    Verlangt HA-only-Mode. Mit auto_fix=True werden fehlende HA_* automatisch
+    aus O/H/L/C gespiegelt und O/H/L/C auf HA_* gesetzt.
+    Wirft nur dann, wenn weder HA_* noch O/H/L/C vollständig vorhanden sind.
     """
     if df is None or len(df) == 0:
         raise ValueError("require_ha_mode: Leer/None DataFrame.")
-    if df.attrs.get("data_mode") != "HA":
-        raise ValueError("require_ha_mode: DataFrame nicht im HA-Mode. canonicalize_to_ha() zuerst aufrufen.")
 
-    need = {"HA_Open", "HA_High", "HA_Low", "HA_Close"}
-    if not need.issubset(df.columns):
-        raise ValueError("require_ha_mode: HA-Spalten fehlen.")
+    ohlc = ("Open", "High", "Low", "Close")
+    ha   = ("HA_Open", "HA_High", "HA_Low", "HA_Close")
 
-    # Gleichheit prüfen (ohne NaN-Ärger)
-    if not (df["Open"].equals(df["HA_Open"]) and
-            df["High"].equals(df["HA_High"]) and
-            df["Low"].equals(df["HA_Low"]) and
-            df["Close"].equals(df["HA_Close"])):
-        raise ValueError("require_ha_mode: O/H/L/C sind nicht identisch zu HA_*. Pipeline verletzt das HA-only-Versprechen.")
+    has_ohlc = all(c in df.columns for c in ohlc)
+    has_ha   = all(c in df.columns for c in ha)
+
+    if not has_ha:
+        if auto_fix and has_ohlc:
+            # HA_* aus O/H/L/C erzeugen
+            df["HA_Open"]  = df["Open"]
+            df["HA_High"]  = df["High"]
+            df["HA_Low"]   = df["Low"]
+            df["HA_Close"] = df["Close"]
+            has_ha = True
+        else:
+            raise ValueError("require_ha_mode: HA-Spalten fehlen.")
+
+    if not has_ohlc:
+        if auto_fix:
+            # Falls jemand HA_* geliefert hat aber O/H/L/C fehlen – spiegeln
+            df["Open"]  = df["HA_Open"]
+            df["High"]  = df["HA_High"]
+            df["Low"]   = df["HA_Low"]
+            df["Close"] = df["HA_Close"]
+            has_ohlc = True
+        else:
+            raise ValueError("require_ha_mode: O/H/L/C fehlen.")
+
+    # O/H/L/C auf HA_* angleichen (hart erzwingen)
+    for base, h in zip(ohlc, ha):
+        if base not in df.columns or h not in df.columns:
+            raise ValueError("require_ha_mode: Spalteninkonsistenz.")
+        if not df[base].equals(df[h]):
+            df[base] = df[h]
+
+    df.attrs["data_mode"] = "HA"
+
 
 
 def remove_isolated_candles(df: pd.DataFrame) -> pd.DataFrame:
@@ -516,12 +575,12 @@ def remove_isolated_candles(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or len(df) < 3:
         return df.reset_index(drop=True) if isinstance(df, pd.DataFrame) else df
 
-    # Primär HA  Fallback auf klassische OHLC, mit einmaligem Hinweis
+    # Primär HA – Fallback auf klassische OHLC, mit einmaligem Hinweis
     if {"HA_Open", "HA_Close"}.issubset(df.columns):
         o_col, c_col = "HA_Open", "HA_Close"
     elif {"Open", "Close"}.issubset(df.columns):
         o_col, c_col = "Open", "Close"
-        print("?? remove_isolated_candles: HA_Open/HA_Close nicht gefunden  Fallback auf Open/Close.")
+        print("?? remove_isolated_candles: HA_Open/HA_Close nicht gefunden – Fallback auf Open/Close.")
     else:
         raise ValueError("remove_isolated_candles benötigt entweder HA_Open/HA_Close oder Open/Close.")
 
@@ -740,6 +799,156 @@ def berechne_verbindungslinien(validated_arms, data):
 
     return verbindungen_liste
 
+# --- Dow-Regel: Runs + Annotationen (HA-only) --------------------
+from typing import List, Dict, Optional
+
+def build_color_runs(df: pd.DataFrame, trend_col: str = "Trend") -> List[Dict]:
+    """
+    Segmentiert den DF in 'Runs' aus aufeinanderfolgenden HA-Kerzen gleicher Farbe (UP/DOWN).
+    Dojis/Neutrals werden ignoriert bzw. schließen keinen Run auf (werden dem vorherigen zugeschlagen).
+    Erwartet: require_ha_mode(df) wurde vorher aufgerufen (HA-only).
+    Rückgabe: Liste von Dicts mit start_idx, end_idx, color, run_high, run_low
+    """
+    require_ha_mode(df)
+    if trend_col not in df.columns:
+        raise ValueError(f"build_color_runs: Spalte '{trend_col}' fehlt.")
+
+    runs: List[Dict] = []
+    n = len(df)
+    if n == 0:
+        return runs
+
+    def _finalize(s: int, e: int, color: str):
+        frag = df.loc[s:e, :]
+        runs.append({
+            "id": len(runs),
+            "start_idx": s,
+            "end_idx": e,
+            "color": color,
+            "run_high": float(frag["High"].max()),
+            "run_low": float(frag["Low"].min()),
+            # Platzhalter – füllen wir in annotate_dow_per_run
+            "regime": "RANGE",
+            "hh": False, "hl": False, "lh": False, "ll": False
+        })
+
+    i = 0
+    # erste gültige Farbe finden
+    while i < n and df.at[i, trend_col] not in ("UP", "DOWN"):
+        i += 1
+    if i >= n:
+        return runs
+
+    curr_color = df.at[i, trend_col]
+    run_start = i
+    i += 1
+
+    while i < n:
+        c = df.at[i, trend_col]
+        if c not in ("UP", "DOWN"):
+            # ignoriere Doji/Neutral innerhalb des Runs
+            i += 1
+            continue
+        if c != curr_color:
+            _finalize(run_start, i - 1, curr_color)
+            curr_color = c
+            run_start = i
+        i += 1
+    # letzten Run schließen
+    _finalize(run_start, n - 1, curr_color)
+    return runs
+
+
+def annotate_dow_per_run(runs: List[Dict]) -> List[Dict]:
+    """
+    Wendet die Dow-Regel auf Run-Ebene an.
+    - UP-Run bestätigt Aufwärtstrend, wenn HH & HL relativ zu zuletzt bestätigten Marken.
+    - DOWN-Run bestätigt Abwärtstrend, wenn LL & LH relativ zu zuletzt bestätigten Marken.
+    Aktualisiert run['regime'] in {"UP","DOWN","RANGE"} und Flags hh/hl/lh/ll.
+    """
+    if not runs:
+        return runs
+
+    last_high: Optional[float] = None
+    last_low: Optional[float] = None
+    current_regime: str = "RANGE"
+
+    # Initialisierung mit erstem Run (unbestätigt)
+    r0 = runs[0]
+    last_high = r0["run_high"]
+    last_low = r0["run_low"]
+    r0["regime"] = "RANGE"
+
+    for ri in range(1, len(runs)):
+        r = runs[ri]
+        color = r["color"]
+        rh, rl = r["run_high"], r["run_low"]
+
+        # Reset Flags
+        r["hh"] = r["hl"] = r["lh"] = r["ll"] = False
+        r["regime"] = current_regime  # default: bleibt wie zuvor
+
+        if color == "UP":
+            r["hh"] = (rh > (last_high if last_high is not None else rh - 1e9))
+            r["hl"] = (rl > (last_low  if last_low  is not None else rl - 1e9))
+            if r["hh"] and r["hl"]:
+                r["regime"] = "UP"
+                current_regime = "UP"
+                last_high, last_low = rh, rl   # bestätigte Marken übernehmen
+        elif color == "DOWN":
+            r["ll"] = (rl < (last_low  if last_low  is not None else rl + 1e9))
+            r["lh"] = (rh < (last_high if last_high is not None else rh + 1e9))
+            if r["ll"] and r["lh"]:
+                r["regime"] = "DOWN"
+                current_regime = "DOWN"
+                last_high, last_low = rh, rl
+        # Falls nur eine der Bedingungen erfüllt ist → unbestätigt: regime bleibt alt
+
+    return runs
+
+
+def annotate_arms_with_runs(arms: List, runs: List[Dict]) -> None:
+    """
+    Weist jedem Arm den dominanten Run zu (per Mid-Index) und kopiert Dow-Infos.
+    Setzt Attribute am Arm: regime, hh, hl, lh, ll.
+    """
+    if not arms or not runs:
+        return
+    for arm in arms:
+        s, e = int(getattr(arm, "start_idx", -1)), int(getattr(arm, "end_idx", -1))
+        if e < s or s < 0:
+            continue
+        mid = (s + e) // 2
+        # Run finden, der den Mid-Index enthält
+        found = None
+        for r in runs:
+            if r["start_idx"] <= mid <= r["end_idx"]:
+                found = r
+                break
+        if not found:
+            # Fallback: größter Überlapp
+            best, best_ov = None, -1
+            for r in runs:
+                ov = max(0, min(e, r["end_idx"]) - max(s, r["start_idx"]) + 1)
+                if ov > best_ov:
+                    best_ov, best = ov, r
+            found = best
+
+        if found:
+            try:
+                setattr(arm, "regime", found["regime"])
+                setattr(arm, "hh", bool(found["hh"]))
+                setattr(arm, "hl", bool(found["hl"]))
+                setattr(arm, "lh", bool(found["lh"]))
+                setattr(arm, "ll", bool(found["ll"]))
+            except Exception:
+                pass
+        else:
+            setattr(arm, "regime", "RANGE")
+            setattr(arm, "hh", False); setattr(arm, "hl", False)
+            setattr(arm, "lh", False); setattr(arm, "ll", False)
+# -----------------------------------------------------------------
+
 
 def debug_luecken_untersuchung(
     arm_i, arm_j, data, d_idx=None, D=None, debug_path=r"D:\TradingBot\output\Luecken_Untersuchung.txt"
@@ -783,6 +992,5 @@ def dump_plot_arms_to_txt(plot_arms, prefix="Plot-Arms-Dump", filename=r"D:\Trad
             )
         f.write("-" * 50 + "\n")
         f.write(f"Anzahl Plot-Arms: {len(plot_arms)}\n")
-
 
         f.write("-" * 50 + "\n")
