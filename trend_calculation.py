@@ -456,6 +456,35 @@ def kerzenfarbe(open_, close_):
 +        df = df.drop(df.index[to_remove])
 +    return df.reset_index(drop=True)
 
+def count_isolated_ha_candles(df: pd.DataFrame) -> int:
+    """
+    Zählt verbleibende isolierte HA-Kerzen (gleiches Kriterium wie remove_isolated_candles).
+    Erwartet 0 nach erfolgreichem Cleanup.
+    """
+    if df is None or len(df) < 3:
+        return 0
+
+    if {"HA_Open", "HA_Close"}.issubset(df.columns):
+        o_col, c_col = "HA_Open", "HA_Close"
+    elif {"Open", "Close"}.issubset(df.columns):
+        o_col, c_col = "Open", "Close"
+    else:
+        raise ValueError("count_isolated_ha_candles benötigt HA_Open/HA_Close oder Open/Close.")
+
+    cnt = 0
+    for i in range(1, len(df) - 1):
+        prev_color = kerzenfarbe(df.iloc[i - 1][o_col], df.iloc[i - 1][c_col])
+        curr_color = kerzenfarbe(df.iloc[i][o_col], df.iloc[i][c_col])
+        next_color = kerzenfarbe(df.iloc[i + 1][o_col], df.iloc[i + 1][c_col])
+
+        if prev_color == next_color and curr_color != prev_color:
+            prev_body = abs(df.iloc[i - 1][o_col] - df.iloc[i - 1][c_col])
+            curr_body = abs(df.iloc[i][o_col] - df.iloc[i][c_col])
+            next_body = abs(df.iloc[i + 1][o_col] - df.iloc[i + 1][c_col])
+            avg_neighbor_body = (prev_body + next_body) / 2.0
+            if avg_neighbor_body > 0 and curr_body <= 0.06 * avg_neighbor_body:
+                cnt += 1
+    return cnt
 
 
 def detect_trend_arms(ha_data: pd.DataFrame) -> List[ArmConnection]:
@@ -668,3 +697,4 @@ def dump_plot_arms_to_txt(plot_arms, prefix="Plot-Arms-Dump", filename=r"D:\Trad
         f.write(f"Anzahl Plot-Arms: {len(plot_arms)}\n")
 
         f.write("-" * 50 + "\n")
+
