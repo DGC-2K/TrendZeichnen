@@ -1,0 +1,137 @@
+ALLGEMEIN *************************************************************************
+
+1) Wenn eine Kerze keinen Körper besitzt ABS(open-close) <= 1, wird die Farbe dieser Kerze als die Farbe der ersten nachfolgenden Kerze, die ein Körper hat, bestimmt. 
+2) Der Startpunkt eines neuen Arms (start_idx) wird auf den Endpunkt des vorherigen Arms (end_idx) gesetzt. Die Trendarme sind nahtlos miteinander verbunden.
+3) Die Validierung bezieht sich immer auf den letzten validierten Trendarm.
+
+TRENDARME ERKENNUNG *************************************************************************
+
+Die Regeln für Trendarme Erkennung sind:
+1) Abwärtstrend:
+1.a) Startpunkt: Der Startpunkt eines neuen Arms (start_idx) wird auf den Endpunkt des vorherigen Arms (end_idx) gesetzt. Bei der ersten Trendarm der High der ersten Kerze benutzen.
+1.b) Folgekerzen untersuchen: Analysiere die nachfolgenden roten Kerzen, um den absolut tiefsten Punkt (K_i_t) des aktuellen Abwärtstrends zu finden. Der Endpunkt des Trendarms ist die Kerze mit diesem absolut tiefsten Low. Der Trendarm endet, bevor die erste grüne Kerze erscheint.
+1.c) Trendarm zeichnen: start_idx mit K_i_t verbinden. Dies ergibt den Trendarm.
+
+2) Aufwärtstrend:
+2.a) Startpunkt: Der Startpunkt eines neuen Arms (start_idx) wird auf den Endpunkt des vorherigen Arms (end_idx) gesetzt. Bei der ersten Trendarm der Low der ersten Kerze benutzen.
+2.b) Folgekerzen untersuchen: Analysiere die nachfolgenden grüne Kerzen, um den absolut höchste Punkt (K_i_h) des aktuellen Aufwärtstrends zu finden. Der Endpunkt des Trendarms ist die Kerze mit diesem absolut höchsten High. Der Trendarm endet, bevor die erste rote Kerze erscheint.
+
+2.c) Trendarm zeichnen: start_idx mit K_i_h verbinden. Dies ergibt den Trendarm.
+
+3) Hilfslinien einzeichnen & anpassen
+Initiale Hilfslinien: Nach dem ersten Trendarm werden die Hilfslinien einmalig basierend auf K_i_h (höchster Punkt) - grüne Linie, bzw. K_i_t (tiefster Punkt) - rote Linie - gezogen.
+Fortlaufende Anpassung: Bei jedem neuen validierten Trendarm werden die Hilfslinien neu bewertet (die alten Hilfslinien werden gelöscht): Falls der neue Trendarm einen höheren Hochpunkt liefert, wird die obere Hilfslinie nach oben verschoben. Falls der neue Trendarm einen tieferen Tiefpunkt liefert, wird die untere Hilfslinie nach unten verschoben. Die Linien bleiben horizontal und werden nicht zurückgesetzt, solange der Trend intakt ist.
+
+VALIDIERUNG *************************************************************************
+
+1. Der erste Trendarm ist immer valide
+2. Trendarm_i ist valide
+3. Validierung von Arm_i+1:
+- 2.1. Die Validierung sollte sich immer auf den letzten validierten Arm beziehen. 
+- 2.2. Nach dem Start von Arm_i+1 müssen drei aufeinanderfolgende Schlusskurse auftreten, die entweder alle über der oberen Hilfslinie von Arm_i oder alle unter der unteren Hilfslinie von Arm_i liegen.
+Diese drei Closes dürfen sich höchstens über die beiden Arme Arm_i+1 und Arm_i+2 verteilen (nicht weiter in die Zukunft!).
+Mindestens eine dieser drei Kerzen muss zu Arm_i+1 gehören.
+Alle drei Kerzen müssen unterschiedlich sein.
+
+
+(Beispiel: a) Arm_i+1: Kerzen 10-15, die Kerzen 10,11 und 12 haben Closes über der obere Hilfslinie der Arm_i - Der Arm_i+1 wird validiert. Wenn nicht die Kerzen 10-12, sondern die Kerzen 12-14 Closes über der obere Hilfslinie hätten, würde der Arm_i+1 ebenso validiert).
+
+ZEICHNUNG VON TRENDLINIEN *************************************************************************
+
+Definitionen
+
+    A, B, C, D sind Extremwerte (High/Low) von Heikin-Ashi-Kerzen.
+
+        A und B: Start- und Endpunkt eines validierten Trendarms AiAi​.
+
+        C: Endpunkt des nächsten validierten Trendarms Ai+1Ai+1​.
+
+        D: Der höchste/tiefste Punkt zwischen B und C (abhängig vom Trendkontext).
+
+Regeln für Trendlinienkonstruktion
+1. Aufwärtstrend mit Korrektur
+
+Bedingung: A<B<C
+
+    Ermittle D als den tiefsten Punkt zwischen B und C.
+
+    Wenn D<B:
+    Verbinde B–D (Korrektur) und D–C (neuer Impuls).
+
+2. Abwärtstrend mit Korrektur
+
+Bedingung: A>B>C
+
+    Ermittle D als den höchsten Punkt zwischen B und C.
+
+    Wenn D>B:
+    Verbinde B–D (Korrektur) und D–C (neuer Impuls).
+ 
+3. Trendumkehr oder Seitwärtsbewegung
+
+Bedingung: C<A<B oder C>A>B
+
+    Verbinde direkt B–C
+
+C-Serie (Finale Trendarme)
+
+    Die durch diese Regeln generierten Linien bilden die C-Serie (C1,C2,...,CnC1​,C2​,...,Cn​).
+
+    Diese Serie repräsentiert das finale Trendmuster und dient als Basis für weitere Analysen.
+
+ANPASSUNG VON HILFSLINIEN****************************************************
+# Nomenklatur:
+Körper: Der Bereich zwischen dem Eröffnungs- (Open) und dem Schlusskurs (Close) der Kerze.
+
+Schatten (oder Docht/Lunte): Die Linien, die über (High) und unter (Low) dem Kerzenkörper liegen.
+
+High: Der höchste Kurs der Kerze.
+
+Low: Der tiefste Kurs der Kerze.
+
+Open: Der Eröffnungskurs der Kerze.
+
+Close: Der Schlusskurs der Kerze.
+
+#Regel:
+Nachdem die Hilfslinie eingezeichnet wurde, wird sie bei den nachfolgenden Kerzen überprüft, beginnend mit der ersten Kerze nach dem Ende des Arms, der die Linie erstellt hat. Es wird geprüft, wo die Linie die allererste dieser nachfolgenden Kerzen schneidet: am Körper oder bei dem Schatten.
+Wenn die Hilfslinie den Schatten schneidet, wird die Linie auf den Wert des "High" oder "Low" der betreffenden Kerze verschoben. Wenn sie den Körper schneidet, wird die Linie nicht verschoben.
+
+Beispiel:
+
+Eine Hilfslinie H1 = 3829.39 schneidet die erste nachfolgende Kerze (Kerze 12) am unteren Schatten.
+
+In diesem Fall wird die Hilfslinie auf das Low = 3.827,81 dieser Kerze verschoben.
+
+Hätte die Hilfslinie den oberen Schatten der Kerze geschnitten, würde sie auf das High = 3.836,47 dieser Kerze verschoben.
+
+Hätte die Hilfslinie den Körper der Kerze getroffen, würde sie nicht verschoben.
+
+Vorsicht: Die Regel verlangt, dass die Hilfslinie solange bei den nachfolgenden Kerzen überprüft wird, bis sie von einer Kerze geschnitten wird (entweder vom Körper oder Schatten).
+
+
+REGEL FÜR DAS AUSSORTIEREN ISOLIERTER KERZEN***********************************************
+
+Eine Kerze wird aussortiert, wenn sie folgende Bedingungen erfüllt:
+
+    Isolierte Position: Die Kerze hat eine entgegengesetzte Farbe zu ihren beiden direkten Nachbarkerzen
+
+    Körpergröße: Die Länge ihres Körpers (|Open - Close|) beträgt ≤ 6% der durchschnittlichen Körperlänge der beiden Nachbarkerzen
+
+Beispiel:
+Kerze 5 (rot) | Kerze 6 (grün, isoliert) | Kerze 7 (rot)
+
+    Berechnung:
+
+        Körperlänge Kerze 6: |3.539,27 - 3.541,19| = 1,92
+
+        Körperlänge Kerze 5: |3.555,71 - 3.522,83| = 32,88
+
+        Körperlänge Kerze 7: |3.540,23 - 3.498,34| = 41,89
+
+        Durchschnitt Nachbarkerzen: (32,88 + 41,89)/2 = 37,39
+
+        6% von 37,39 = 2,24 → 1,92 ≤ 2,24 → Aussortieren
+
+
+
