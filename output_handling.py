@@ -1,6 +1,7 @@
 ﻿# -*- coding: utf-8 -*-
 
 import os
+import numpy as np
 from datetime import datetime, timedelta
 from typing import List
 
@@ -35,6 +36,16 @@ def generate_plot_arms(verbindungen_liste, ha_data, serie_typ: str = "unbekannt"
     debug_file = os.path.join(BASE_OUTPUT_DIR, "C-Serie-Debug-Ausgaben5.txt")
     debug_verbindungen_liste(verbindungen_liste, serie_typ + " (PlotArms Eingang)", debug_file)
 
+    def _set_fib382(arm: ArmConnection):
+        # 38,2%-Retracement über die Arm-Spanne – abhängig von der Richtung
+        span_low  = min(arm.start_price, arm.end_price)
+        span_high = max(arm.start_price, arm.end_price)
+        rng = span_high - span_low
+        if rng > 0:
+            arm.fib382 = (span_high - 0.382 * rng) if arm.direction == 'UP' else (span_low + 0.382 * rng)
+        else:
+            arm.fib382 = None
+
     plot_arms = []
     for v in verbindungen_liste:
         if v['typ'] == 'B1':
@@ -50,7 +61,9 @@ def generate_plot_arms(verbindungen_liste, ha_data, serie_typ: str = "unbekannt"
                 end_price=end_price,
                 validated=True
             )
+            _set_fib382(arm)
             plot_arms.append(arm)
+
         elif v['typ'] == 'B-C':
             start_idx, start_price = v['start']
             end_idx, end_price = v['ende']
@@ -64,13 +77,17 @@ def generate_plot_arms(verbindungen_liste, ha_data, serie_typ: str = "unbekannt"
                 end_price=end_price,
                 validated=True
             )
+            _set_fib382(arm)
             plot_arms.append(arm)
+
         elif v['typ'] == 'B-D-C':
             start_idx, start_price = v['start']
             mitte_idx, mitte_price = v['mitte']
             end_idx, end_price = v['ende']
+
             direction1 = 'UP' if mitte_price > start_price else 'DOWN'
             direction2 = 'UP' if end_price > mitte_price else 'DOWN'
+
             arm1 = ArmConnection(
                 arm_num=len(plot_arms) + 1,
                 direction=direction1,
@@ -80,6 +97,8 @@ def generate_plot_arms(verbindungen_liste, ha_data, serie_typ: str = "unbekannt"
                 end_price=mitte_price,
                 validated=True
             )
+            _set_fib382(arm1)
+
             arm2 = ArmConnection(
                 arm_num=len(plot_arms) + 1,
                 direction=direction2,
@@ -89,21 +108,27 @@ def generate_plot_arms(verbindungen_liste, ha_data, serie_typ: str = "unbekannt"
                 end_price=end_price,
                 validated=True
             )
+            _set_fib382(arm2)
+
             plot_arms.append(arm1)
             plot_arms.append(arm2)
+
     # Debug-Ausgabe in Datei schreiben (PlotArms)
     with open(debug_file, "a", encoding="utf-8") as f:
         f.write("\n[OUTPUT] Plot Arms nach generate_plot_arms:\n")
         for i, arm in enumerate(plot_arms):
-            f.write(
-                f"  C{i+2}: Kerzen {arm.start_idx}-{arm.end_idx}, Richtung: {arm.direction}, "
+            line = (
+                f"  C{i+1}: Kerzen {arm.start_idx}-{arm.end_idx}, Richtung: {arm.direction}, "
                 f"StartPreis: {arm.start_price:.2f}, EndPreis: {arm.end_price:.2f}, "
                 f"validated: {arm.validated}"
             )
-            f.write("\n")
+            if hasattr(arm, "fib382") and arm.fib382 is not None:
+                line += f", FIB38: {arm.fib382:.6f}"
+            f.write(line + "\n")
         f.write("-" * 50 + "\n")
 
     return plot_arms
+
 
 def plot_ha_with_trend_arms(
     ha_data, arm_container, ticker, interval,
