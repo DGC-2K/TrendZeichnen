@@ -1,0 +1,66 @@
+Modularer Datenfluss & Integration (Nummeriert)
+------------------------------------------------
+
+(1) ┌─────────────────────────────────────────────────────────────┐
+    │  Roh-Daten (Yahoo Finance)                                  │
+    │  download_data() inkl. 1m-period-Trick                      │
+    └─────────────────────────────────────────────────────────────┘
+                      │
+                      ▼
+(2) ┌─────────────────────────────────────────────────────┐
+    │ Heikin-Ashi-Transformation                          │
+    │ calculate_ha()  → Spalten: HA_Open/HA_High/…        │
+    └─────────────────────────────────────────────────────┘
+                      │
+                      ▼
+(2.5) ┌────────────────────────────────────────────────────────────┐
+      │ HA-Kanonisierung & Guard                                   │
+      │ canonicalize_to_ha(df)  → O/H/L/C = HA_*  + Raw_* Backup   │
+      │ df.attrs["data_mode"] = "HA"                               │
+      │ Ab hier in JEDEM Schritt: require_ha_mode(df)              │
+      └────────────────────────────────────────────────────────────┘
+                      │
+                      ▼
+(3) ┌─────────────────────────────────────────────────────┐
+    │ HA bereinigen                                       │
+    │ remove_isolated_candles()                           │
+    │ Sanity-Check: count_isolated_ha_candles() == 0      │
+    └─────────────────────────────────────────────────────┘
+                      │
+                      ▼
+(4) ┌─────────────────────────────────────────────────────┐
+    │ Trendarm-Erkennung & dynamische Validierung         │
+    │ (direkt, ohne B-Serie), z. B. detect_trend_arms()   │
+    └─────────────────────────────────────────────────────┘
+                      │
+                      ▼
+(5) ┌─────────────────────────────────────────────────────┐
+    │ Hilfslinien & Fibonacci je Arm                      │
+    │ Kanal: compute_channel_bounds_for_arm()             │
+    │ FIB 38,2 %: compute_fib382_for_arms()*              │
+    └─────────────────────────────────────────────────────┘
+                      │
+                      ▼
+(6) ┌─────────────────────────────────────────────────────┐
+    │ Verbindungslogik                                    │
+    │ berechne_verbindungslinien() (Regeln: B–D–C, B–C)   │
+    └─────────────────────────────────────────────────────┘
+                      │
+                      ▼
+(7) ┌──────────────────────────────────────────────────┐
+    │ CTrendArmContainer (read-only)                   │
+    │ speichert finale C-Serie: c_arms                 │
+    │ Zugriff für Analyse/Plot/Export                  │
+    └──────────────────────────────────────────────────┘
+          │                 │                 │
+          ▼                 ▼                 ▼
+   Analyse/Backtests   Plotting (plot_…)   Export (save_to_csv, save_ha_kerzen_csv)
+
+*Hinweis: Wenn du FIB 38,2 % erst fürs Plotten setzen möchtest, passiert das in generate_plot_arms()
+(arm.fib382 wird dort aus start/end berechnet).
+
+Wichtige Invarianten (ab Schritt 2.5)
+-------------------------------------
+- HA-only: require_ha_mode(df) am Beginn aller nachgelagerten Funktionen.
+- Gleichheit: Open/High/Low/Close sind identisch zu HA_Open/HA_High/HA_Low/HA_Close.
+- Fail-fast: Verstößt etwas dagegen, wirft der Guard eine klare Fehlermeldung.
