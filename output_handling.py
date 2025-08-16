@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.ticker as mticker
 from matplotlib.dates import DateFormatter, MinuteLocator
 
 from trend_calculation import (
@@ -122,16 +123,10 @@ def generate_plot_arms(verbindungen_liste, ha_data, serie_typ: str = "unbekannt"
 
     return plot_arms
 
+
 # --------------------------------------------------------------------
 # Haupt-Plotfunktion (stabil & ohne Modulebenen-Seiteneffekte)
 # --------------------------------------------------------------------
-
-from typing import List
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.dates import MinuteLocator, DateFormatter
 
 def plot_ha_with_trend_arms(
     ha_data: pd.DataFrame,
@@ -222,10 +217,15 @@ def plot_ha_with_trend_arms(
     fig, ax = plt.subplots(figsize=(18, 9))
     ax.set_title(f"Heikin Ashi Chart - {ticker} - Interval: {interval}", fontsize=16, fontweight="bold", pad=10)
 
-    dates = mdates.date2num(np.array(ha_data["Zeit"].dt.to_pydatetime()))
-    interval_to_minutes = {"1m": 1, "2m": 2, "5m": 5, "15m": 15, "30m": 30, "60m": 60, "1h": 60, "1d": 1440}
-    minutes_per_interval = interval_to_minutes.get(interval, 2)
-    width = (minutes_per_interval / (24 * 60)) * 0.70
+    # Gleichmäßige x-Abstände ohne Lücken (Kerzenindex):
+    if "Kerze_Nr" in ha_data.columns:
+        dates = ha_data["Kerze_Nr"].to_numpy()              # 0..N-1
+    elif ha_data.index.name == "Kerze_Nr" or ("Kerze_Nr" in getattr(ha_data.index, "names", []) if hasattr(ha_data.index, "names") else False):
+        dates = ha_data.index.to_numpy()                    # falls als Index gesetzt
+    else:
+        dates = np.arange(len(ha_data), dtype=int)          # Fallback: laufender Index
+
+    width = 0.70   # Breite in Index-Einheiten
 
     # === Runs einmal berechnen (optional) ===
     try:
@@ -334,9 +334,15 @@ def plot_ha_with_trend_arms(
                     ax.text(mid_x, mid_y, f"C{c_idx}", fontsize=11, color=col, fontweight="bold", zorder=11)
                     c_idx += 1
 
-    # Achsen & Layout
-    ax.xaxis.set_major_locator(MinuteLocator(interval=15))
-    ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+    # --- X-Achse: feste (sparsame) Ticks mit Zeit-Labels; KEIN DateLocator ---
+    step = max(1, len(ha_data) // 10)
+    tick_pos = dates[::step] if isinstance(dates, np.ndarray) else np.arange(0, len(ha_data), step)
+    tick_lbl = ha_data["Zeit"].iloc[::step].dt.strftime("%H:%M").tolist()
+
+    ax.xaxis.set_major_locator(mticker.FixedLocator(tick_pos))
+    ax.xaxis.set_major_formatter(mticker.FixedFormatter(tick_lbl))
+    ax.xaxis.set_minor_locator(mticker.NullLocator())
+
     ax.tick_params(axis="x", labelsize=8)
     ax.set_xlabel("Zeit", fontsize=12, labelpad=10)
     ax.set_ylabel("Preis", fontsize=12, labelpad=10)
@@ -363,14 +369,14 @@ def plot_ha_with_trend_arms(
         pad = pr * 0.10 if pr > 0 else max(mn * 0.005, 0.5)
         ax.set_ylim(mn - pad, mx + pad)
 
-    # X-Limits
+    # X-Limits (Index-Einheiten)
     if len(dates) > 1:
-        x_min_val, x_max_val = dates.min(), dates.max()
+        x_min_val, x_max_val = (float(np.min(dates)), float(np.max(dates)))
         x_range = x_max_val - x_min_val
         ax.set_xlim(x_min_val - x_range * 0.05, x_max_val + x_range * 0.05)
     elif len(dates) == 1:
-        pad = (minutes_per_interval / (60 * 24)) * 5
-        ax.set_xlim(dates[0] - pad, dates[0] + pad)
+        pad = 5.0  # fünf Index-Einheiten links/rechts
+        ax.set_xlim(float(dates[0]) - pad, float(dates[0]) + pad)
 
     fig.tight_layout()
 
@@ -381,8 +387,6 @@ def plot_ha_with_trend_arms(
     print(f"[PlotDBG] candles={candles}, lines={lines}, collections={collections}")
 
     return fig
-
-
 
 
 # --------------------------------------------------------------------

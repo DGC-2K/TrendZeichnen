@@ -1,7 +1,9 @@
 ﻿import os
 import pandas as pd
 from typing import Tuple, List
-from trend_calculation import calculate_ha, detect_trend_arms, remove_isolated_candles
+from trend_calculation import calculate_ha, detect_trend_arms
+from unified_candle_filter import unify_candle_filters
+import json
 
 def workflow_pipeline(rohdaten: pd.DataFrame) -> Tuple[pd.DataFrame, List]:
     """
@@ -25,10 +27,16 @@ def workflow_pipeline(rohdaten: pd.DataFrame) -> Tuple[pd.DataFrame, List]:
     ha_before = ha_data.copy()
     ha_before.head(50).to_csv(f"{base}_vor_remove_isolated_candles{ext}", index=False)
 
-    # 4. remove_isolated_candles ausfÃ¼hren
-    ha_data = remove_isolated_candles(ha_data)
-    ha_data.head(50).to_csv(f"{base}_nach_remove_isolated_candles{ext}", index=False)
+    # 4. remove_isolated_candles
+    ha_data, report = unify_candle_filters(
+        ha_data,
+        W=50, tau_range=0.12, tau_body=0.08,
+        pivot_protect=True, pivot_look=2,
+        reindex_sequential=False, return_report=True
+    )
 
+# Nach dem Filter
+ha_data.head(50).to_csv(f"{base}_nach_unified_filter{ext}", index=False)
     # 5. Entfernte Zeilen speichern (max 50)
     removed = pd.concat([ha_before, ha_data]).drop_duplicates(keep=False)
     removed.head(50).to_csv(f"{base}_entfernte_zeilen{ext}", index=False)
