@@ -19,7 +19,10 @@ from trend_calculation import (
     build_color_runs,
     annotate_dow_per_run,
     annotate_arms_with_runs,
+    smooth_regimes_by_neighbors,   # ← neu
+    enforce_block_coherence,       # ← neu
 )
+
 
 # --------------------------------------------------------------------
 # Hilfsfunktionen für Verbindungs-Debug & Plot-Arm-Erzeugung
@@ -123,159 +126,264 @@ def generate_plot_arms(verbindungen_liste, ha_data, serie_typ: str = "unbekannt"
 # Haupt-Plotfunktion (stabil & ohne Modulebenen-Seiteneffekte)
 # --------------------------------------------------------------------
 
+from typing import List
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.dates import MinuteLocator, DateFormatter
+
 def plot_ha_with_trend_arms(
-    ha_data: pd.DataFrame, arm_container: ArmContainer, ticker: str, interval: str,
-    show_plot_a: bool = True, show_plot_b: bool = True, show_plot_c: bool = True
+    ha_data: pd.DataFrame,
+    arm_container,
+    ticker: str,
+    interval: str,
+    show_plot_a: bool = True,
+    show_plot_b: bool = True,
+    show_plot_c: bool = True,
 ):
-    # Guards & Aufbereitung
-    if 'Zeit' not in ha_data.columns:
-        raise ValueError("Die Spalte 'Zeit' muss im ha_data DataFrame vorhanden sein.")
-    ha_data = ha_data.copy()
-    ha_data['Zeit'] = pd.to_datetime(ha_data['Zeit'])
+    """
+    Zeichnet HA-Kerzen und Trendarme (A/B/C).
 
-    for _c in ("Open", "High", "Low", "Close"):
-        if _c in ha_data.columns and not pd.api.types.is_float_dtype(ha_data[_c]):
-            ha_data[_c] = pd.to_numeric(ha_data[_c], errors="coerce")
-    ha_data = ha_data.dropna(subset=["Zeit", "Open", "High", "Low", "Close"]).reset_index(drop=True)
+    Farb-Logik für B- & C-Arme:
+      1) arm.regime (falls gesetzt)
+      2) arm.regime_h1 (Dow/H1)
+      3) arm.regime_run (Run-Mehrheit)
+      4) Fallback: Geometrie/Steigung (end_price > start_price => UP)
+    """
 
-    n = len(ha_data)
-    if n == 0:
-        raise ValueError("ha_data ist nach Cleanup leer – nichts zu plotten.")
+    # ---- kleine Helfer -------------------------------------------------
+    def _slope_regime(arm) -> str:
+        """Richtung strikt nach Geometrie: end_price > start_price => UP, sonst DOWN."""
+        try:
+            return "UP" if float(arm.end_price) > float(arm.start_price) else "DOWN"
+        except Exception:
+            return "DOWN"
 
     def _regime_color(regime: str) -> str:
-        if regime == "UP":   return "limegreen"
-        if regime == "DOWN": return "red"
+        if regime == "UP":
+            return "limegreen"
+        if regime == "DOWN":
+            return "red"
         return "gray"
 
-    # Figure/Axes
-    plt.style.use('seaborn-v0_8-whitegrid')
-    fig, ax = plt.subplots(figsize=(18, 9))
-    ax.set_title(f"Heikin Ashi Chart - {ticker} - Interval: {interval}",
-                 fontsize=16, fontweight='bold', pad=10)
+    def _coerce_nums(df: pd.DataFrame):
+        for c in ("Open", "High", "Low", "Close"):
+            if c in df.columns and not pd.api.types.is_float_dtype(df[c]):
+                df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    dates = mdates.date2num(np.array(ha_data['Zeit'].dt.to_pydatetime()))
-    interval_to_minutes = {'1m': 1, '2m': 2, '5m': 5, '15m': 15, '30m': 30, '60m': 60, '1h': 60, '1d': 1440}
+    def _geom_dir(a) -> str:
+        try:
+            return "UP" if float(a.end_price) >= float(a.start_price) else "DOWN"
+        except Exception:
+            return getattr(a, "direction", "DOWN")
+
+    def _neighbor_smooth(arms: List):
+        """
+        Weiche Glättung: Wenn Mittelarm Regime=R und beide Nachbarn R' haben,
+        und R' stimmt mit Geometrie überein, übernehmen wir R'.
+        (nur Metadaten, beeinflusst die Farbwahl nur indirekt über arm.regime)
+        """
+        if len(arms) < 3:
+            return 0
+        changed = 0
+        for i in range(1, len(arms) - 1):
+            left = getattr(arms[i - 1], "regime", None)
+            mid = getattr(arms[i], "regime", None)
+            right = getattr(arms[i + 1], "regime", None)
+            if left and right and left == right and mid != left:
+                if _geom_dir(arms[i]) == left:
+                    setattr(arms[i], "regime", left)
+                    changed += 1
+        return changed
+
+    def _arm_color(a) -> str:
+        """Farbwahl mit Priorität: regime > regime_h1 > regime_run > Geometrie."""
+        r = getattr(a, "regime", None) \
+         or getattr(a, "regime_h1", None) \
+         or getattr(a, "regime_run", None)
+        if not r:
+            r = _slope_regime(a)
+        return "limegreen" if r == "UP" else "red"
+    # --------------------------------------------------------------------
+
+    # Guard
+    if "Zeit" not in ha_data.columns:
+        raise ValueError("Die Spalte 'Zeit' muss im ha_data DataFrame vorhanden sein.")
+
+    # Datentypen sicherstellen
+    ha_data = ha_data.copy()
+    ha_data["Zeit"] = pd.to_datetime(ha_data["Zeit"])
+    _coerce_nums(ha_data)
+    ha_data = ha_data.dropna(subset=["Open", "High", "Low", "Close", "Zeit"]).reset_index(drop=True)
+
+    # Figure/Axes
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, ax = plt.subplots(figsize=(18, 9))
+    ax.set_title(f"Heikin Ashi Chart - {ticker} - Interval: {interval}", fontsize=16, fontweight="bold", pad=10)
+
+    dates = mdates.date2num(np.array(ha_data["Zeit"].dt.to_pydatetime()))
+    interval_to_minutes = {"1m": 1, "2m": 2, "5m": 5, "15m": 15, "30m": 30, "60m": 60, "1h": 60, "1d": 1440}
     minutes_per_interval = interval_to_minutes.get(interval, 2)
     width = (minutes_per_interval / (24 * 60)) * 0.70
 
-    # Runs (Dow-Regel)
+    # === Runs einmal berechnen (optional) ===
     try:
         runs = build_color_runs(ha_data)
         runs = annotate_dow_per_run(runs)
     except Exception as e:
-        print(f"Dow-Runs konnten nicht erstellt werden: {e}")
+        print(f"[Runs] Konnte Runs nicht berechnen/annotieren: {e}")
         runs = []
 
-    # Kerzen
+    # Kerzen zeichnen
+    n = len(ha_data)
     for i in range(n):
         row = ha_data.iloc[i]
-        o, c = float(row['Open']), float(row['Close'])
-        color = 'limegreen' if row.get('Trend', 'UP') == 'UP' else 'red'
-        ax.bar(dates[i], abs(c - o), bottom=min(o, c),
-               width=width, color=color, edgecolor='black', linewidth=0.5, zorder=2)
-        ax.vlines(dates[i], float(row['Low']), float(row['High']),
-                  color='black', linewidth=0.8, zorder=1)
-        ax.text(dates[i], float(row['High']) * 1.0005, str(ha_data.index[i]),
-                ha='center', va='bottom', fontsize=8, color='black', zorder=3)
+        open_val, close_val = float(row["Open"]), float(row["Close"])
+        tr = row["Trend"] if "Trend" in ha_data.columns else ("UP" if close_val >= open_val else "DOWN")
+        candle_color = "limegreen" if tr == "UP" else "red"
 
-    # A-Serie
-    if show_plot_a and hasattr(arm_container, 'arms'):
-        for arm in arm_container.arms:
+        ax.bar(
+            dates[i],
+            abs(close_val - open_val),
+            bottom=min(open_val, close_val),
+            width=width,
+            color=candle_color,
+            edgecolor="black",
+            linewidth=0.5,
+            zorder=2,
+        )
+        ax.vlines(dates[i], float(row["Low"]), float(row["High"]), color="black", linewidth=0.8, zorder=1)
+        ax.text(
+            dates[i],
+            float(row["High"]) * 1.0004,
+            str(ha_data.index[i]),
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            color="black",
+            zorder=3,
+        )
+
+    # --- A-Serie (optional) ---
+    if show_plot_a and hasattr(arm_container, "arms"):
+        for arm in getattr(arm_container, "arms", []):
             if 0 <= arm.start_idx < n and 0 <= arm.end_idx < n:
-                x = [dates[arm.start_idx], dates[arm.end_idx]]
-                y = [arm.start_price, arm.end_price]
-                ax.plot(x, y, color='magenta', linewidth=2.5, zorder=10)
-                ax.text((x[0]+x[1])/2, (y[0]+y[1])/2, f"A{arm.arm_num}",
-                        fontsize=13, color='magenta', fontweight='bold', zorder=11)
+                x_coords = [dates[arm.start_idx], dates[arm.end_idx]]
+                y_coords = [arm.start_price, arm.end_price]
+                ax.plot(x_coords, y_coords, color="magenta", linewidth=2.5, zorder=10)
+                mid_x = (x_coords[0] + x_coords[1]) / 2
+                mid_y = (y_coords[0] + y_coords[1]) / 2
+                ax.text(mid_x, mid_y, f"A{arm.arm_num}", fontsize=13, color="magenta", fontweight="bold", zorder=11)
 
-    # B-Serie
-    validated_arms: List[ArmConnection] = []
+    # --- B-Serie (validierte Arme, optional) ---
+    validated_arms = []
     if show_plot_b:
         validated_arms = [a for a in getattr(arm_container, "arms", []) if getattr(a, "validated", False)]
         if runs:
-            annotate_arms_with_runs(validated_arms, runs)
-        for i, arm in enumerate(validated_arms, start=1):
+            annotate_arms_with_runs(validated_arms, runs, ha_data)
+        for idx, arm in enumerate(validated_arms, start=1):
             if 0 <= arm.start_idx < n and 0 <= arm.end_idx < n:
-                x = [dates[arm.start_idx], dates[arm.end_idx]]
-                y = [arm.start_price, arm.end_price]
-                col = _regime_color(getattr(arm, "regime", "RANGE"))
-                ax.plot(x, y, color=col, linewidth=2, linestyle='--', zorder=10)
-                ax.text((x[0]+x[1])/2, (y[0]+y[1])/2, f"B{i}",
-                        fontsize=13, color=col, fontweight='bold', zorder=11)
+                x_coords = [dates[arm.start_idx], dates[arm.end_idx]]
+                y_coords = [arm.start_price, arm.end_price]
+                col = _arm_color(arm)
+                ax.plot(x_coords, y_coords, color=col, linewidth=2, linestyle="--", zorder=10)
+                mid_x = (x_coords[0] + x_coords[1]) / 2
+                mid_y = (y_coords[0] + y_coords[1]) / 2
+                ax.text(mid_x, mid_y, f"B{idx}", fontsize=13, color=col, fontweight="bold", zorder=11)
 
-    # C-Serie
+    # --- C-Serie (Verbindungen) ---
     if show_plot_c:
         if not validated_arms:
             validated_arms = [a for a in getattr(arm_container, "arms", []) if getattr(a, "validated", False)]
-        if validated_arms:
-            verbindungen = berechne_verbindungslinien(validated_arms, ha_data)
-            plot_arms = generate_plot_arms(verbindungen, ha_data)
-            if runs:
-                annotate_arms_with_runs(plot_arms, runs)
 
+        if validated_arms:
+            verbindungen_liste = berechne_verbindungslinien(validated_arms, ha_data)
+            plot_arms = generate_plot_arms(verbindungen_liste, ha_data)
+
+            # 1) Chronologisch sortieren
+            plot_arms.sort(key=lambda a: (int(a.start_idx), int(a.end_idx)))
+
+            # 2) Runs annotieren (liefert ggf. regime_run)
+            if runs:
+                annotate_arms_with_runs(plot_arms, runs, ha_data)
+
+            # 3) Optionale Nachbar-Glättung der Meta-Regime
+            _neighbor_smooth(plot_arms)
+
+            # 4) Zeichnen – Farbe via Helper (regime/Regeln > Geometrie)
             c_idx = 1
             for arm in plot_arms:
                 if 0 <= arm.start_idx < n and 0 <= arm.end_idx < n:
-                    x = [dates[arm.start_idx], dates[arm.end_idx]]
-                    y = [arm.start_price, arm.end_price]
-                    col = _regime_color(getattr(arm, "regime", "RANGE"))
-                    ax.plot(x, y, color=col, linewidth=1.6, linestyle=':', zorder=9)
+                    x_coords = [dates[arm.start_idx], dates[arm.end_idx]]
+                    y_coords = [arm.start_price, arm.end_price]
 
+                    col = _arm_color(arm)
+                    ax.plot(x_coords, y_coords, color=col, linewidth=1.6, linestyle=":", zorder=9)
+
+                    # FIB 38,2 % (falls vorhanden)
                     level = getattr(arm, "fib382", None)
                     if level is not None:
-                        ax.hlines(level, x[0], x[1], linestyles="dashed", linewidth=1,
-                                  zorder=12, color='purple')
-                        ax.text(x[1], level, "38.2%", va="bottom", ha="left",
-                                fontsize=8, zorder=13)
+                        x0_num = dates[arm.start_idx]
+                        x1_num = dates[arm.end_idx]
+                        ax.hlines(level, x0_num, x1_num, linestyles="dashed", linewidth=1, zorder=12, color="purple")
+                        ax.text(x1_num, level, "38.2%", va="bottom", ha="left", fontsize=8, zorder=13)
 
-                    ax.text((x[0]+x[1])/2, (y[0]+y[1])/2, f"C{c_idx}",
-                            fontsize=11, color=col, fontweight='bold', zorder=11)
+                    mid_x = (x_coords[0] + x_coords[1]) / 2
+                    mid_y = (y_coords[0] + y_coords[1]) / 2
+                    ax.text(mid_x, mid_y, f"C{c_idx}", fontsize=11, color=col, fontweight="bold", zorder=11)
                     c_idx += 1
 
     # Achsen & Layout
     ax.xaxis.set_major_locator(MinuteLocator(interval=15))
-    ax.xaxis.set_major_formatter(DateFormatter('%H:%M'))
-    ax.tick_params(axis='x', labelsize=8)
+    ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+    ax.tick_params(axis="x", labelsize=8)
     ax.set_xlabel("Zeit", fontsize=12, labelpad=10)
     ax.set_ylabel("Preis", fontsize=12, labelpad=10)
-    ax.grid(True, linestyle='--', alpha=0.6)
+    ax.grid(True, linestyle="--", alpha=0.6)
 
+    # Y-Limits
     all_prices = []
     if not ha_data.empty:
-        all_prices += ha_data['High'].tolist() + ha_data['Low'].tolist()
-    if show_plot_a and hasattr(arm_container, 'arms'):
-        for a in arm_container.arms:
-            if a.start_idx < n and a.end_idx < n:
-                all_prices += [a.start_price, a.end_price]
+        all_prices.extend(ha_data["High"].tolist())
+        all_prices.extend(ha_data["Low"].tolist())
+    if show_plot_a and hasattr(arm_container, "arms"):
+        for arm in getattr(arm_container, "arms", []):
+            if arm.start_idx < n and arm.end_idx < n:
+                all_prices.extend([arm.start_price, arm.end_price])
     if show_plot_b:
-        for a in validated_arms:
-            if a.start_idx < n and a.end_idx < n:
-                all_prices += [a.start_price, a.end_price]
+        for arm in validated_arms:
+            if arm.start_idx < n and arm.end_idx < n:
+                all_prices.extend([arm.start_price, arm.end_price])
+
     all_prices = [p for p in all_prices if not np.isnan(p)]
     if all_prices:
         mn, mx = min(all_prices), max(all_prices)
         pr = mx - mn
-        pad = pr * 0.10 if pr != 0 else max(mn * 0.005, 0.5)
+        pad = pr * 0.10 if pr > 0 else max(mn * 0.005, 0.5)
         ax.set_ylim(mn - pad, mx + pad)
 
+    # X-Limits
     if len(dates) > 1:
-        x_min, x_max = dates.min(), dates.max()
-        xr = x_max - x_min
-        ax.set_xlim(x_min - xr * 0.05, x_max + xr * 0.05)
+        x_min_val, x_max_val = dates.min(), dates.max()
+        x_range = x_max_val - x_min_val
+        ax.set_xlim(x_min_val - x_range * 0.05, x_max_val + x_range * 0.05)
     elif len(dates) == 1:
         pad = (minutes_per_interval / (60 * 24)) * 5
         ax.set_xlim(dates[0] - pad, dates[0] + pad)
 
     fig.tight_layout()
-    fig.canvas.draw_idle()
 
-    # Debug
+    # Debug: wurde wirklich gezeichnet?
     candles = sum(isinstance(p, plt.Rectangle) for p in ax.patches)
     lines = len(ax.lines)
     collections = len(ax.collections)
     print(f"[PlotDBG] candles={candles}, lines={lines}, collections={collections}")
 
     return fig
+
+
+
 
 # --------------------------------------------------------------------
 # CSV/Debug Exporte (sauber auf Funktionen beschränkt)

@@ -19,17 +19,18 @@ from data_processing import (
 
 # Trend calculation
 from trend_calculation import (
-    # HA & Guards
     calculate_ha,
     canonicalize_to_ha,
     remove_isolated_candles,
     remove_micro_flip_candles,
+    remove_tiny_same_color_candles,  # <-- HIER ergänzen
     count_isolated_ha_candles,
-    # Arme & Verbindungen
     detect_trend_arms,
     ArmContainer,
     berechne_verbindungslinien,
 )
+
+
 
 # Output handling
 from output_handling import (
@@ -81,6 +82,7 @@ def main():
         ha_df = calculate_ha(original_data)
         if {"HA_Open", "HA_High", "HA_Low", "HA_Close"}.issubset(ha_df.columns):
             ha_df = canonicalize_to_ha(ha_df)
+            ha_df = remove_micro_flip_candles(ha_df, body_ratio=0.20, range_ratio=0.50, require_inside=True, verbose=True)
         else:
             ha_df.attrs["data_mode"] = "HA"  # Guard zufriedenstellen
         # 3) Cleanup: isolierte & Mikro-Brücken-Kerzen (Marktrauschen) entfernen
@@ -90,12 +92,16 @@ def main():
             pre_iso = None
 
         ha_df = remove_isolated_candles(ha_df)
-        ha_df = remove_micro_flip_candles(
+        ha_df = remove_micro_flip_candles(ha_df, body_ratio=0.20, range_ratio=0.50, verbose=True)
+
+        ha_df = remove_tiny_same_color_candles(
             ha_df,
-            body_ratio=0.20,   # ≤20% des Nachbar-Körperdurchschnitts
-            range_ratio=0.50,  # ≤50% der Nachbar-Range
+            body_ratio=0.08,
+            range_ratio=0.35,
+            require_inside=True,
             verbose=True
         )
+
 
         try:
             post_iso = count_isolated_ha_candles(ha_df)
