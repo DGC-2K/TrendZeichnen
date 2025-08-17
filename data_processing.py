@@ -1,94 +1,71 @@
-﻿# -*- coding: utf-8 -*-
-
-import pandas as pd
+﻿import pandas as pd
 import yfinance as yf
-from pandas.api import types as pd_types
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta 
+import numpy as np
+import pandas.api.types as pd_types
+
 
 def download_data(ticker: str, start_date: datetime, end_date: datetime, interval: str) -> pd.DataFrame:
     """
-    Lädt Finanzdaten von Yahoo Finance und bereinigt sie.
-    Für interval='1m' nutzt die Funktion period ('1d' bzw. '7d') und schneidet dann mit .last('<h>h'),
-    statt per [start_date, end_date] zu filtern (wichtig bei marktgeschlossenen Zeiten).
+    Lädt Finanzdaten für den angegebenen Ticker und Zeitraum von Yahoo Finance und bereinigt sie.
     """
-    if end_date is None:
-        end_date = datetime.now()
-    if start_date is None:
-        start_date = end_date - timedelta(days=1)
-
     print(f"⬇️ Lade Daten für {ticker} von {start_date.strftime('%Y-%m-%d %H:%M')} bis {end_date.strftime('%Y-%m-%d %H:%M')}...")
-
     try:
-        if interval == "1m":
-            hours = max(1, int((end_date - start_date).total_seconds() // 3600))
-            period = "1d" if hours <= 24 else ("7d" if hours <= 7*24 else None)
-            if period is None:
-                print("⚠️ 1m-Daten sind nur bis max. 7 Tage verfügbar.")
-                return pd.DataFrame()
-
-            # Laden und RELATIV auf die letzten 'hours' Stunden begrenzen
-            data = yf.download(ticker, period=period, interval=interval, progress=False)
-            if data.empty:
-                print(f"⚠️ Keine Daten für {ticker} erhalten.")
-                return pd.DataFrame()
-
-            # Zeitzone entfernen (falls vorhanden), dann relative Auswahl
-            if isinstance(data.index, pd.DatetimeIndex) and data.index.tz is not None:
-                data.index = data.index.tz_localize(None)
-            data = data.last(f"{hours}h")
-
-        else:
-            # Standardpfad für andere Intervalle
-            data = yf.download(ticker, start=start_date, end=end_date, interval=interval, progress=False)
-
+        data = yf.download(ticker, start=start_date, end=end_date, interval=interval, progress=False)
+        
         if data.empty:
             print(f"⚠️ Keine Daten für {ticker} im angegebenen Zeitraum und Intervall gefunden.")
-            return pd.DataFrame()
-
-        # MultiIndex-Spalten beheben
+            return pd.DataFrame() 
+            
+        # MultiIndex-Spalten beheben, falls vorhanden
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
-        # 'Adj Close' -> 'Close'
+        # Spalte 'Adj Close' zu 'Close' umbenennen
         if 'Adj Close' in data.columns:
             data.rename(columns={'Adj Close': 'Close'}, inplace=True)
-
-        required_ohlc_cols = ['Open', 'High', 'Low', 'Close']
+            
+        required_ohlc_cols = ['Open', 'High', 'Low', 'Close'] 
+        
+        # Sicherstellen, dass alle grundlegenden OHLV-Spalten vorhanden sind
         if not all(col in data.columns for col in required_ohlc_cols):
-            print(f"❌ Fehler: Eine der erforderlichen Spalten {required_ohlc_cols} fehlt.")
-            return pd.DataFrame()
+            print(f"❌ Fehler: Eine der erforderlichen Spalten {required_ohlc_cols} fehlt in den Daten.")
+            return pd.DataFrame() 
 
+        # Konvertiere alle OHLV-Spalten zu numerischen Typen und entferne NaN-Werte
         for col in required_ohlc_cols:
             data[col] = pd.to_numeric(data[col], errors='coerce')
+        
         data.dropna(subset=required_ohlc_cols, inplace=True)
+        
         if data.empty:
-            print("⚠️ Daten nach der Bereinigung leer.")
+            print(f"⚠️ Daten für {ticker} nach der Bereinigung leer geworden.")
             return pd.DataFrame()
 
-        # Index -> 'Zeit'
+        # Index und 'Zeit' Spalte verarbeiten
         data.reset_index(inplace=True)
+        
         if 'index' in data.columns:
-            data.rename(columns={'index': 'Zeit'}, inplace=True)
+            data.rename(columns={'index': 'Zeit'}, inplace=True) 
         elif 'Datetime' in data.columns:
-            data.rename(columns={'Datetime': 'Zeit'}, inplace=True)
-        elif 'Date' in data.columns:
-            data.rename(columns={'Date': 'Zeit'}, inplace=True)
+            data.rename(columns={'Datetime': 'Zeit'}, inplace=True) 
         else:
-            print("❌ Fehler: Unbekannter Zeitstempel-Name.")
-            return pd.DataFrame()
+            print("❌ Fehler: Unbekannter Zeitstempel-Spaltenname.")
+            return pd.DataFrame() 
 
-        # Laufende Nummer
+        # 'Kerze_Nr' erstellen
         data['Kerze_Nr'] = range(len(data))
-        data = data[['Kerze_Nr', 'Zeit', 'Open', 'High', 'Low', 'Close']]
+        
+        # Endgültige Spaltenreihenfolge
+        final_cols_order = ['Kerze_Nr', 'Zeit', 'Open', 'High', 'Low', 'Close']
+        data = data[final_cols_order]
 
         print(f"✅ Daten erfolgreich geladen und vorstrukturiert. {len(data)} Kerzen.")
         return data
 
     except Exception as e:
-        print(f"❌ Ausnahme beim Laden: {e}")
+        print(f"❌ Fehler beim Laden/Vorbereiten der Daten von yfinance: {e}")
         return pd.DataFrame()
-
-
 
 
 def prepare_data(data: pd.DataFrame) -> pd.DataFrame:

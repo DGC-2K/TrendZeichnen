@@ -1,190 +1,110 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-# --- STANDARD LIBRARY IMPORTS ---
+# Importe der benötigten Module
+from data_processing import download_data, prepare_data, bestimme_heikin_ashi_farbe
+from trend_calculation import calculate_ha, detect_trend_arms, ArmContainer, berechne_verbindungslinien
+from output_handling import save_to_csv, plot_ha_with_trend_arms, BASE_OUTPUT_DIR
+from output_handling import dump_plot_arms_to_txt, generate_plot_arms, save_ha_kerzen_csv
+from workflow_pipeline import workflow_pipeline
+
+import pandas as pd
 import os
 from datetime import datetime, timedelta
-
-# --- THIRD-PARTY LIBRARY IMPORTS ---
-import pandas as pd
 import matplotlib.pyplot as plt
-import output_handling as oh
 
-# --- LOCAL MODULE IMPORTS ---
-# Data processing
-from data_processing import (
-    download_data,
-    prepare_data,
-    bestimme_heikin_ashi_farbe,
-)
-
-# Trend calculation
-from trend_calculation import (
-    calculate_ha,
-    canonicalize_to_ha,
-    remove_isolated_candles,
-    remove_micro_flip_candles,
-    remove_tiny_same_color_candles,  # <-- HIER ergänzen
-    count_isolated_ha_candles,
-    detect_trend_arms,
-    ArmContainer,
-    berechne_verbindungslinien,
-)
-
-
-
-# Output handling
-from output_handling import (
-    save_to_csv,
-    plot_ha_with_trend_arms,
-    dump_plot_arms_to_txt,
-    generate_plot_arms,
-    save_ha_kerzen_csv,
-)
 # --- KONFIGURATION ---
 TICKER = "ETH-USD"
-INTERVAL = "1m"
-HOURS_TO_ANALYZE = 2
-# Beispiele:
-# TICKER = "EURUSD=X"
-# TICKER = "NVDA"
-# INTERVAL = "1m"
-# HOURS_TO_ANALYZE = 3
-
-# Wohin wir alles schreiben:
-BASE_OUTPUT_DIR = os.environ.get("TREND_OUTPUT_DIR", r"D:\TradingBot\output")
+INTERVAL = "2m"
+HOURS_TO_ANALYZE = 5
 
 def main():
-    print("\n" + "=" * 60)
-    print("HEIKIN-ASHI TRENDARM-ANALYSE".center(60))
+    print("\n" + "="*60)
+    print(f"HEIKIN-ASHI TRENDARM-ANALYSE".center(60))
     print(f"Ticker: {TICKER} | Intervall: {INTERVAL}".center(60))
-    print("=" * 60 + "\n")
-
+    print("="*60 + "\n")
+    
     try:
         # Output-Verzeichnisse sicherstellen
         os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
         os.makedirs(r"D:\TradingBot\output", exist_ok=True)
 
-        # 1) Daten herunterladen und vorbereiten
+        # 1. Daten herunterladen und vorbereiten
         end_date = datetime.now()
         start_date = end_date - timedelta(hours=HOURS_TO_ANALYZE)
-
+        
         raw_data = download_data(TICKER, start_date, end_date, INTERVAL)
+        
         if raw_data.empty:
-            raise ValueError("Keine Rohdaten von yfinance erhalten. Prüfen Sie Ticker, Internet oder API-Limits.")
+            raise ValueError("Keine Rohdaten von yfinance erhalten. Überprüfen Sie Ticker, Internet oder API-Limits.")
+        
         print(f"✅ Rohdaten erfolgreich heruntergeladen. {len(raw_data)} Kerzen.")
-
+        
         original_data = prepare_data(raw_data)
+        
         if original_data.empty:
             raise ValueError("Rohdaten konnten nach der Vorbereitung nicht verwendet werden.")
+            
         print(f"✅ Rohdaten erfolgreich vorbereitet. {len(original_data)} Kerzen verbleiben.")
 
-        # 2) HA bauen + HA-only kanonisieren
-        ha_df = calculate_ha(original_data)
-        if {"HA_Open", "HA_High", "HA_Low", "HA_Close"}.issubset(ha_df.columns):
-            ha_df = canonicalize_to_ha(ha_df)
-            ha_df = remove_micro_flip_candles(ha_df, body_ratio=0.20, range_ratio=0.50, require_inside=True, verbose=True)
-        else:
-            ha_df.attrs["data_mode"] = "HA"  # Guard zufriedenstellen
-        # 3) Cleanup: isolierte & Mikro-Brücken-Kerzen (Marktrauschen) entfernen
-        try:
-            pre_iso = count_isolated_ha_candles(ha_df)
-        except Exception:
-            pre_iso = None
+        # 2. Zentrale Pipeline aufrufen (inklusive Debug-Ausgaben)
+        print("⏳ Starte zentrale Workflow-Pipeline (inkl. Kontroll-CSV-Ausgaben)...")
+        ha_data, arms = workflow_pipeline(original_data)
 
-        ha_df = remove_isolated_candles(ha_df)
-        ha_df = remove_micro_flip_candles(ha_df, body_ratio=0.20, range_ratio=0.50, verbose=True)
+        if ha_data.empty:
+            raise ValueError("Heikin-Ashi Daten konnten nicht berechnet werden.")
 
-        ha_df = remove_tiny_same_color_candles(
-            ha_df,
-            body_ratio=0.08,
-            range_ratio=0.35,
-            require_inside=True,
-            verbose=True
-        )
-
-
-        try:
-            post_iso = count_isolated_ha_candles(ha_df)
-        except Exception:
-            post_iso = None
-
-        if pre_iso is not None and post_iso is not None:
-            print(f"🧹 Isolierte vor Cleanup: {pre_iso}, nach Cleanup: {post_iso}")
-        print(f"✅ HA-Daten nach Cleanup: {len(ha_df)} Kerzen.")
-
-        # (optional) Heikin-Ashi-Farbe, falls nicht vorhanden
-        if "Farbe" not in ha_df.columns and "Trend" in ha_df.columns:
-            ha_df["Farbe"] = bestimme_heikin_ashi_farbe(ha_df)
-
-        # 4) Trendarme erkennen (auf bereinigten HA-Daten!)
-        arms = detect_trend_arms(ha_df)
+        print(f"✅ Heikin-Ashi Daten erfolgreich berechnet. {len(ha_data)} HA-Kerzen.")
         print(f"✅ {len(arms)} Trendarme erkannt.")
 
-        # 5) Container bauen & validieren
-        print("ℹ️ Starte Validierung der Trendarme auf Heikin-Ashi Daten...")
+        # Optional: Heikin-Ashi-Farbe berechnen (falls benötigt)
+        if 'Farbe' not in ha_data.columns:
+            ha_data['Farbe'] = bestimme_heikin_ashi_farbe(ha_data)
+
+        # 3. Trendarme in ArmContainer
         arm_container = ArmContainer(debug_mode=True)
-        for arm in arms:
-            arm_container.add_arm(arm)
+        for arm_obj in arms:
+            arm_container.add_arm(arm_obj)
+        
+        # 4. Validierung der Trendarme
+        print(f"ℹ️ Starte Validierung der Trendarme auf Heikin-Ashi Daten...")
+        arm_container.validate_arms(ha_data) 
+        validated_arms = [arm for arm in arm_container.arms if arm.validated]
+        print(f"✅ Validierung abgeschlossen. Ergebnisse in 'output/arm_validation_debug.txt'.")
 
-        arm_container.validate_arms(ha_df)
-        validated_arms = [arm for arm in arm_container.arms if getattr(arm, "validated", False)]
-        print(f"✅ Validierung abgeschlossen. Validierte Arme: {len(validated_arms)}")
+        # 5. Verbindungslinien berechnen
+        verbindungen_liste = berechne_verbindungslinien(validated_arms, ha_data)
 
-        # 6) Verbindungslinien (C-Serie) berechnen & Plot-Arms erzeugen
-        verbindungen_liste = berechne_verbindungslinien(validated_arms, ha_df)
         print("\n[DEBUG] Verbindungslinien (C-Serie):")
-        for idx, v in enumerate(verbindungen_liste, start=1):
-            print(f"C{idx}: {v}")
+        for idx, verbindung in enumerate(verbindungen_liste, start=1):
+            print(f"C{idx}: {verbindung}")
 
-        arm_container.plot_arms = generate_plot_arms(verbindungen_liste, ha_df)
+        # 6. Plot-Arms generieren & zuweisen
+        arm_container.plot_arms = generate_plot_arms(verbindungen_liste, ha_data)
 
-        # 7) Plot erstellen (B-/A-Serien auf Wunsch ein-/ausblenden)
+        # 7. Chart plotten
         fig = plot_ha_with_trend_arms(
-            ha_data=ha_df,
+            ha_data=ha_data,
             arm_container=arm_container,
             ticker=TICKER,
             interval=INTERVAL,
-            show_plot_a=False,   # A-Serie ausblenden
-            show_plot_b=False,   # B-Serie ausblenden
-            show_plot_c=True     # C-Serie anzeigen
+            show_plot_a=False,  # Original-Trendarme (A1, A2,...) ausblenden
+            show_plot_b=False,  # Validierte Trendarme (B1, B2,...) ausblenden
+            show_plot_c=True    # Nur Verbindungslinien (C1, C2,...) anzeigen
         )
+        
+        # 8. Speichern des Charts
+        chart_path = os.path.join(BASE_OUTPUT_DIR, f"HA_Chart_{TICKER}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+        fig.savefig(chart_path, dpi=300, bbox_inches='tight')
 
-        # 8) Chart speichern – nur wenn wirklich was drauf ist
-        chart_path = os.path.join(
-            BASE_OUTPUT_DIR, f"HA_Chart_{TICKER}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-        )
-
-        if fig is None:
-            fig = plt.gcf()
-
-        if fig is not None and fig.axes:
-            ax0 = fig.axes[0]
-            drew_anything = not (
-                len(ax0.lines) == 0 and len(ax0.patches) == 0 and len(ax0.collections) == 0
-            )
-            if drew_anything:
-                fig.savefig(chart_path, dpi=300, bbox_inches="tight")
-                print(f"✅ Chart gespeichert: {chart_path}")
-            else:
-                print("⚠️ Nichts gezeichnet – PNG nicht gespeichert (siehe [PlotDBG] Ausgabe).")
-        else:
-            print("⚠️ Kein Figure-Handle verfügbar.")
-
-
-        # 9) Exporte
-        csv_path = save_to_csv(ha_df, arm_container, BASE_OUTPUT_DIR, TICKER)
-        csv_path_ha_kerzen = save_ha_kerzen_csv(ha_df, r"D:\TradingBot\output", TICKER)
-
-        print("\n✅ Analyse erfolgreich abgeschlossen")
+        csv_path = save_to_csv(ha_data, arm_container, BASE_OUTPUT_DIR, TICKER)
+        csv_path_ha_kerzen = save_ha_kerzen_csv(ha_data, r"D:\TradingBot\output", TICKER)
+        print(f"\n✅ Analyse erfolgreich abgeschlossen")
         print(f"- Heikin-Ashi CSV: {os.path.abspath(csv_path)}")
-        print(f"- HA-Kerzen CSV:  {os.path.abspath(csv_path_ha_kerzen)}")
-        print(f"- Chart (PNG):    {os.path.abspath(chart_path)}")
+        print(f"- Chart (PNG): {os.path.abspath(chart_path)}")
 
-        # 10) Dump der Plot-Arms
+        # 9. Dump der Plot-Arms
         dump_plot_arms_to_txt(arm_container.plot_arms)
-
-        # Optional anzeigen (nur interaktiv)
         plt.show()
 
     except Exception as e:
@@ -194,7 +114,7 @@ def main():
         print("\nEmpfohlene Maßnahmen:")
         print("1. Internetverbindung/VPN prüfen.")
         print("2. Ticker auf BTC-USD oder ein anderes gängiges Symbol testen.")
-        print("3. Das angefragte Zeitintervall könnte zu groß/klein sein für yfinance.")
+        print("3. Das angefragte Zeitintervall könnte zu groß oder zu klein sein für yfinance.")
         print("4. Stellen Sie sicher, dass Ihr Systemdatum korrekt eingestellt ist.")
 
 

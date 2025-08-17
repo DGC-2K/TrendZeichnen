@@ -1,45 +1,60 @@
-﻿import os
+import os
 import pandas as pd
 from typing import Tuple, List
-from trend_calculation import calculate_ha, detect_trend_arms
-from unified_candle_filter import unify_candle_filters
-import json
+from trend_calculation import calculate_ha, detect_trend_arms, remove_isolated_candles
+
+def save_kontroll_csv(df: pd.DataFrame, path: str):
+    def german_format(x):
+        try:
+            return f"{float(x):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        except (ValueError, TypeError):
+            if x is not None and str(x).strip() != '':
+                return "0,000"
+            return ''
+    
+    if 'Zeit' not in df.columns:
+        raise ValueError("Die Spalte 'Zeit' muss im DataFrame vorhanden sein!")
+    
+    out = pd.DataFrame({
+        'Kerze_Nr': df.index.values,
+        'Zeit': pd.to_datetime(df['Zeit']).dt.strftime('%d.%m.%Y %H:%M'),
+        'Open': df['Open'].apply(german_format),
+        'High': df['High'].apply(german_format),
+        'Low': df['Low'].apply(german_format),
+        'Close': df['Close'].apply(german_format),
+    })
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    out.to_csv(path, index=False, sep=";", encoding="utf-8-sig")
 
 def workflow_pipeline(rohdaten: pd.DataFrame) -> Tuple[pd.DataFrame, List]:
     """
-    FÃ¼hrt den gesamten Workflow aus, schreibt Debug-CSV-Ausgaben und gibt
-    die berechneten Heikin-Ashi-Daten und die Trendarme zurÃ¼ck.
+    Führt den gesamten Workflow aus, schreibt Debug-CSV-Ausgaben und gibt
+    die berechneten Heikin-Ashi-Daten und die Trendarme zurück.
     """
 
-    # Basispfad fÃ¼r Debug/CSV-Dateien
+    # Basispfad für Debug/CSV-Dateien
     base_csv = r"D:\TradingBot\output\HA_Kerzen_Kontroll.csv"
     base, ext = os.path.splitext(base_csv)
     os.makedirs(os.path.dirname(base_csv), exist_ok=True)
 
     # 1. Rohdaten speichern
-    rohdaten.head(50).to_csv(f"{base}_vor_calculate_ha{ext}", index=False)
+    save_kontroll_csv(rohdaten.head(50), f"{base}_vor_calculate_ha{ext}")
 
     # 2. Heikin-Ashi-Berechnung
     ha_data = calculate_ha(rohdaten)
-    ha_data.head(50).to_csv(f"{base}_nach_calculate_ha{ext}", index=False)
+    save_kontroll_csv(ha_data.head(50), f"{base}_nach_calculate_ha{ext}")
 
     # 3. Vor remove_isolated_candles
     ha_before = ha_data.copy()
-    ha_before.head(50).to_csv(f"{base}_vor_remove_isolated_candles{ext}", index=False)
+    save_kontroll_csv(ha_before.head(50), f"{base}_vor_remove_isolated_candles{ext}")
 
-    # 4. remove_isolated_candles
-    ha_data, report = unify_candle_filters(
-        ha_data,
-        W=50, tau_range=0.12, tau_body=0.08,
-        pivot_protect=True, pivot_look=2,
-        reindex_sequential=False, return_report=True
-    )
+    # 4. remove_isolated_candles ausführen
+    ha_data = remove_isolated_candles(ha_data)
+    save_kontroll_csv(ha_data.head(50), f"{base}_nach_remove_isolated_candles{ext}")
 
-# Nach dem Filter
-ha_data.head(50).to_csv(f"{base}_nach_unified_filter{ext}", index=False)
     # 5. Entfernte Zeilen speichern (max 50)
     removed = pd.concat([ha_before, ha_data]).drop_duplicates(keep=False)
-    removed.head(50).to_csv(f"{base}_entfernte_zeilen{ext}", index=False)
+    save_kontroll_csv(removed.head(50), f"{base}_entfernte_zeilen{ext}")
 
     # 6. Trendarme erkennen
     arms = detect_trend_arms(ha_data)

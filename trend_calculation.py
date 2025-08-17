@@ -1,6 +1,4 @@
-﻿# -*- coding: utf-8 -*-
-
-import pandas as pd
+﻿import pandas as pd
 import numpy as np
 from typing import List, Tuple, Optional
 import os
@@ -221,6 +219,7 @@ class ArmContainer:
                 dbgfile.write(f"  B{i+1}: {v.start_idx}-{v.end_idx}, Richtung: {v.direction}, validated: {v.validated}\n")
             dbgfile.write("-" * 50 + "\n")
 
+
         for verbindung in verbindungen_liste:
             start_idx, start_price = verbindung['start']
             end_idx, end_price = verbindung['ende']
@@ -235,6 +234,7 @@ class ArmContainer:
                 end_price=end_price,
                 validated=True
             )
+
 
             if 'mitte' in verbindung:
                 mid_idx, mid_price = verbindung['mitte']
@@ -261,7 +261,7 @@ class ArmContainer:
 
     def validate_arms(self, ha_data: pd.DataFrame) -> None:
         if ha_data.empty or not self.arms:
-            print("?? Warnung: Keine Daten oder Arme vorhanden.")
+            print("⚠️ Warnung: Keine Daten oder Arme vorhanden.")
             return
 
         with self._lock:
@@ -317,7 +317,6 @@ class ArmContainer:
             dump_plot_arms_to_txt(self.plot_arms, prefix="Vor Trendbruch-Check", filename=r"D:\TradingBot\output\DumpPA2.txt")
             TrendBreakDetector.detect_trend_break_and_restart(self, ha_data)
             dump_plot_arms_to_txt(self.plot_arms, prefix="Nach Trendbruch-Check", filename=r"D:\TradingBot\output\DumpPA2.txt")
-
     def _adjust_bounds_to_candle_extremes(self, ha_data: pd.DataFrame, target_idx: int, debug_file) -> None:
         if target_idx >= len(ha_data):
             return
@@ -343,7 +342,7 @@ class ArmContainer:
 
     def _update_bounds(self, arm: ArmConnection, data: pd.DataFrame) -> None:
         if arm.end_idx >= len(data) or arm.start_idx >= len(data):
-            print(f"?? Warnung: _update_bounds erhielt Arm {arm.arm_num} mit ungültigen Indizes. Bounds nicht aktualisiert.")
+            print(f"⚠️ Warnung: _update_bounds erhielt Arm {arm.arm_num} mit ungültigen Indizes. Bounds nicht aktualisiert.")
             return
 
         arm_data = data.iloc[arm.start_idx:arm.end_idx + 1]
@@ -354,7 +353,7 @@ class ArmContainer:
 
 def calculate_ha(data: pd.DataFrame) -> pd.DataFrame:
     if data.empty:
-        print("?? Warnung: calculate_ha wurde mit leeren Daten aufgerufen.")
+        print("⚠️ Warnung: calculate_ha wurde mit leeren Daten aufgerufen.")
         return pd.DataFrame()
 
     required_cols = ['Open', 'High', 'Low', 'Close']
@@ -423,271 +422,29 @@ def kerzenfarbe(open_, close_):
     else:
         return "doji"
 
-def remove_micro_flip_candles(
-    df: pd.DataFrame,
-    body_ratio: float = 0.20,
-    range_ratio: float = 0.50,
-    require_inside: bool = False,
-    verbose: bool = True,
-) -> pd.DataFrame:
-    # --- harte Typen: Float erzwingen ---
-    for c in ("Open","High","Low","Close"):
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.dropna(subset=["Open","High","Low","Close"]).reset_index(drop=True)
-
-    # Farbe sicher bestimmen (Fallback ohne 'Trend')
-    def color_at(i: int) -> str:
-        r = df.iloc[i]
-        if "Trend" in df.columns and r["Trend"] in ("UP","DOWN"):
-            return r["Trend"]
-        return "UP" if float(r["Close"]) >= float(r["Open"]) else "DOWN"
-
-    n = len(df)
-    if n < 3:
-        return df
-
-    to_drop = []
-    for i in range(1, n-1):
-        t_prev, t_curr, t_next = color_at(i-1), color_at(i), color_at(i+1)
-        # isolierter Farbflip (… und Nachbarn gleiche Farbe)
-        if (t_curr != t_prev) and (t_prev == t_next):
-            b_prev = abs(df.iloc[i-1]["Close"] - df.iloc[i-1]["Open"])
-            b_curr = abs(df.iloc[i]["Close"]  - df.iloc[i]["Open"])
-            b_next = abs(df.iloc[i+1]["Close"] - df.iloc[i+1]["Open"])
-
-            r_prev = df.iloc[i-1]["High"] - df.iloc[i-1]["Low"]
-            r_curr = df.iloc[i]["High"]     - df.iloc[i]["Low"]
-            r_next = df.iloc[i+1]["High"] - df.iloc[i+1]["Low"]
-
-            b_avg = (b_prev + b_next) / 2.0
-            r_avg = (r_prev + r_next) / 2.0
-
-            small_body = (b_avg > 0) and (b_curr <= body_ratio  * b_avg)
-            small_range = (r_avg > 0) and (r_curr <= range_ratio * r_avg)
-
-            inside_ok = True
-            if require_inside:
-                hi_nei = max(df.iloc[i-1]["High"], df.iloc[i+1]["High"])
-                lo_nei = min(df.iloc[i-1]["Low"],  df.iloc[i+1]["Low"])
-                inside_ok = (df.iloc[i]["High"] <= hi_nei) and (df.iloc[i]["Low"] >= lo_nei)
-
-            if small_body and small_range and inside_ok:
-                to_drop.append(i)
-
-    if verbose and to_drop:
-        print(f"[cleanup] remove_micro_flip_candles: drop {len(to_drop)} -> {to_drop[:10]}")
-
-    return df.drop(df.index[to_drop]).reset_index(drop=True)
-
-
-def remove_tiny_same_color_candles(
-    df: pd.DataFrame,
-    body_ratio: float = 0.08,     # ≤ 8% des Nachbar-Körperdurchschnitts
-    range_ratio: float = 0.35,    # ≤ 35% des Nachbar-Range-Durchschnitts
-    require_inside: bool = True,  # Kerze muss vollständig im Nachbar-Korridor liegen
-    verbose: bool = False,
-) -> pd.DataFrame:
-    """
-    Entfernt winzige HA-Kerzen, die die gleiche Farbe wie BEIDE Nachbarn haben und
-    (optional) komplett innerhalb deren High/Low liegen (Inside-Bar).
-
-    Regeln (zusätzlich zum Flip-Filter):
-      - Trend[i] == Trend[i-1] == Trend[i+1]
-      - |Close[i]-Open[i]| <= body_ratio   * avg(|Close[i±1]-Open[i±1]|)
-      - (High[i]-Low[i])   <= range_ratio  * avg((High[i±1]-Low[i±1]))
-      - optional: Inside-Bar gegenüber Nachbarn
-    """
-    # Falls du einen Guard hast:
-    try:
-        require_ha_mode(df)  # nutzt deine bestehende Guard-Funktion
-    except Exception:
-        pass
-
-    if len(df) < 3:
-        return df
-
-    to_drop = []
-    for i in range(1, len(df) - 1):
-        t_prev, t_curr, t_next = df.iloc[i-1]["Trend"], df.iloc[i]["Trend"], df.iloc[i+1]["Trend"]
-        if t_prev == t_curr == t_next:
-            b_prev = abs(df.iloc[i-1]["Close"] - df.iloc[i-1]["Open"])
-            b_curr = abs(df.iloc[i]["Close"]  - df.iloc[i]["Open"])
-            b_next = abs(df.iloc[i+1]["Close"] - df.iloc[i+1]["Open"])
-
-            r_prev = df.iloc[i-1]["High"] - df.iloc[i-1]["Low"]
-            r_curr = df.iloc[i]["High"]  - df.iloc[i]["Low"]
-            r_next = df.iloc[i+1]["High"] - df.iloc[i+1]["Low"]
-
-            b_avg = (b_prev + b_next) / 2.0
-            r_avg = (r_prev + r_next) / 2.0
-
-            if b_avg > 0 and r_avg > 0 and b_curr <= body_ratio * b_avg and r_curr <= range_ratio * r_avg:
-                inside_ok = True
-                if require_inside:
-                    hi_nei = max(df.iloc[i-1]["High"], df.iloc[i+1]["High"])
-                    lo_nei = min(df.iloc[i-1]["Low"],  df.iloc[i+1]["Low"])
-                    inside_ok = (df.iloc[i]["High"] <= hi_nei) and (df.iloc[i]["Low"] >= lo_nei)
-                if inside_ok:
-                    to_drop.append(i)
-
-    if verbose and to_drop:
-        print(f"[cleanup] remove_tiny_same_color_candles: drop {len(to_drop)} Kerzen (idx={to_drop[:6]}...)")
-
-    return df.drop(df.index[to_drop]).reset_index(drop=True)
-
-
-def canonicalize_to_ha(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Setzt Open/High/Low/Close auf HA_* und sorgt dafür, dass HA_* existieren.
-    Falls HA_* fehlen, werden sie aus den vorhandenen O/H/L/C gespiegelt.
-    Sichert bestehende O/H/L/C einmalig in Raw_*.
-    """
-    df = df.copy()
-    ohlc = ("Open", "High", "Low", "Close")
-    ha   = ("HA_Open", "HA_High", "HA_Low", "HA_Close")
-
-    # Falls HA_* fehlen: aus O/H/L/C erzeugen
-    if not all(col in df.columns for col in ha):
-        if not all(col in df.columns for col in ohlc):
-            raise ValueError("canonicalize_to_ha: O/H/L/C fehlen – kann HA nicht kanonisieren.")
-        df["HA_Open"]  = df["Open"]
-        df["HA_High"]  = df["High"]
-        df["HA_Low"]   = df["Low"]
-        df["HA_Close"] = df["Close"]
-
-    # Raw_* sichern (nur einmal)
-    for base in ohlc:
-        raw = f"Raw_{base}"
-        if base in df.columns and raw not in df.columns:
-            df[raw] = df[base]
-
-    # O/H/L/C auf HA_* setzen (ab hier sind O/H/L/C garantiert HA)
-    df["Open"]  = df["HA_Open"]
-    df["High"]  = df["HA_High"]
-    df["Low"]   = df["HA_Low"]
-    df["Close"] = df["HA_Close"]
-
-    df.attrs["data_mode"] = "HA"
-    return df
-
-
-
-def require_ha_mode(df: pd.DataFrame, auto_fix: bool = True) -> None:
-    """
-    Verlangt HA-only-Mode. Mit auto_fix=True werden fehlende HA_* automatisch
-    aus O/H/L/C gespiegelt und O/H/L/C auf HA_* gesetzt.
-    Wirft nur dann, wenn weder HA_* noch O/H/L/C vollständig vorhanden sind.
-    """
-    if df is None or len(df) == 0:
-        raise ValueError("require_ha_mode: Leer/None DataFrame.")
-
-    ohlc = ("Open", "High", "Low", "Close")
-    ha   = ("HA_Open", "HA_High", "HA_Low", "HA_Close")
-
-    has_ohlc = all(c in df.columns for c in ohlc)
-    has_ha   = all(c in df.columns for c in ha)
-
-    if not has_ha:
-        if auto_fix and has_ohlc:
-            # HA_* aus O/H/L/C erzeugen
-            df["HA_Open"]  = df["Open"]
-            df["HA_High"]  = df["High"]
-            df["HA_Low"]   = df["Low"]
-            df["HA_Close"] = df["Close"]
-            has_ha = True
-        else:
-            raise ValueError("require_ha_mode: HA-Spalten fehlen.")
-
-    if not has_ohlc:
-        if auto_fix:
-            # Falls jemand HA_* geliefert hat aber O/H/L/C fehlen – spiegeln
-            df["Open"]  = df["HA_Open"]
-            df["High"]  = df["HA_High"]
-            df["Low"]   = df["HA_Low"]
-            df["Close"] = df["HA_Close"]
-            has_ohlc = True
-        else:
-            raise ValueError("require_ha_mode: O/H/L/C fehlen.")
-
-    # O/H/L/C auf HA_* angleichen (hart erzwingen)
-    for base, h in zip(ohlc, ha):
-        if base not in df.columns or h not in df.columns:
-            raise ValueError("require_ha_mode: Spalteninkonsistenz.")
-        if not df[base].equals(df[h]):
-            df[base] = df[h]
-
-    df.attrs["data_mode"] = "HA"
-
-
 
 def remove_isolated_candles(df: pd.DataFrame) -> pd.DataFrame:
-    # Guards
-    if df is None or len(df) < 3:
-        return df.reset_index(drop=True) if isinstance(df, pd.DataFrame) else df
-
-    # Primär HA – Fallback auf klassische OHLC, mit einmaligem Hinweis
-    if {"HA_Open", "HA_Close"}.issubset(df.columns):
-        o_col, c_col = "HA_Open", "HA_Close"
-    elif {"Open", "Close"}.issubset(df.columns):
-        o_col, c_col = "Open", "Close"
-        print("?? remove_isolated_candles: HA_Open/HA_Close nicht gefunden – Fallback auf Open/Close.")
-    else:
-        raise ValueError("remove_isolated_candles benötigt entweder HA_Open/HA_Close oder Open/Close.")
-
     to_remove = []
     for i in range(1, len(df) - 1):
-        prev_color = kerzenfarbe(df.iloc[i - 1][o_col], df.iloc[i - 1][c_col])
-        curr_color = kerzenfarbe(df.iloc[i][o_col], df.iloc[i][c_col])
-        next_color = kerzenfarbe(df.iloc[i + 1][o_col], df.iloc[i + 1][c_col])
+        prev_color = kerzenfarbe(df.iloc[i - 1]['Open'], df.iloc[i - 1]['Close'])
+        curr_color = kerzenfarbe(df.iloc[i]['Open'], df.iloc[i]['Close'])
+        next_color = kerzenfarbe(df.iloc[i + 1]['Open'], df.iloc[i + 1]['Close'])
 
         if prev_color == next_color and curr_color != prev_color:
-            prev_body = abs(df.iloc[i - 1][o_col] - df.iloc[i - 1][c_col])
-            curr_body = abs(df.iloc[i][o_col] - df.iloc[i][c_col])
-            next_body = abs(df.iloc[i + 1][o_col] - df.iloc[i + 1][c_col])
+            prev_body = abs(df.iloc[i - 1]['Open'] - df.iloc[i - 1]['Close'])
+            curr_body = abs(df.iloc[i]['Open'] - df.iloc[i]['Close'])
+            next_body = abs(df.iloc[i + 1]['Open'] - df.iloc[i + 1]['Close'])
             avg_neighbor_body = (prev_body + next_body) / 2.0
+
             if avg_neighbor_body > 0 and curr_body <= 0.06 * avg_neighbor_body:
                 to_remove.append(i)
 
-    if to_remove:
-        df = df.drop(df.index[to_remove])
-    return df.reset_index(drop=True)
-
-
-def count_isolated_ha_candles(df: pd.DataFrame) -> int:
-    """
-    Zählt verbleibende isolierte HA-Kerzen (gleiches Kriterium wie remove_isolated_candles).
-    Erwartet 0 nach erfolgreichem Cleanup.
-    """
-    if df is None or len(df) < 3:
-        return 0
-
-    if {"HA_Open", "HA_Close"}.issubset(df.columns):
-        o_col, c_col = "HA_Open", "HA_Close"
-    elif {"Open", "Close"}.issubset(df.columns):
-        o_col, c_col = "Open", "Close"
-    else:
-        raise ValueError("count_isolated_ha_candles benötigt HA_Open/HA_Close oder Open/Close.")
-
-    cnt = 0
-    for i in range(1, len(df) - 1):
-        prev_color = kerzenfarbe(df.iloc[i - 1][o_col], df.iloc[i - 1][c_col])
-        curr_color = kerzenfarbe(df.iloc[i][o_col], df.iloc[i][c_col])
-        next_color = kerzenfarbe(df.iloc[i + 1][o_col], df.iloc[i + 1][c_col])
-
-        if prev_color == next_color and curr_color != prev_color:
-            prev_body = abs(df.iloc[i - 1][o_col] - df.iloc[i - 1][c_col])
-            curr_body = abs(df.iloc[i][o_col] - df.iloc[i][c_col])
-            next_body = abs(df.iloc[i + 1][o_col] - df.iloc[i + 1][c_col])
-            avg_neighbor_body = (prev_body + next_body) / 2.0
-            if avg_neighbor_body > 0 and curr_body <= 0.06 * avg_neighbor_body:
-                cnt += 1
-    return cnt
+    return df.drop(df.index[to_remove]).reset_index(drop=True)
 
 
 def detect_trend_arms(ha_data: pd.DataFrame) -> List[ArmConnection]:
     if ha_data.empty:
-        print("?? Warnung: detect_trend_arms wurde mit leeren HA-Daten aufgerufen.")
+        print("⚠️ Warnung: detect_trend_arms wurde mit leeren HA-Daten aufgerufen.")
         return []
 
     if len(ha_data) < 1:
@@ -705,7 +462,7 @@ def detect_trend_arms(ha_data: pd.DataFrame) -> List[ArmConnection]:
         candle = ha_data.iloc[i]
 
         if not all(col in candle for col in ['Trend', 'High', 'Low']):
-            print(f"?? Warnung: Fehlende Spalten in HA-Kerze bei Index {i}. Überspringe.")
+            print(f"⚠️ Warnung: Fehlende Spalten in HA-Kerze bei Index {i}. Überspringe.")
             continue
 
         trend = candle['Trend']
@@ -850,495 +607,6 @@ def berechne_verbindungslinien(validated_arms, data):
 
     return verbindungen_liste
 
-# --- Dow-Regel: Runs + Annotationen (HA-only) --------------------
-from typing import List, Dict, Optional
-
-def build_color_runs(df: pd.DataFrame, trend_col: str = "Trend") -> List[Dict]:
-    """
-    Segmentiert den DF in 'Runs' aus aufeinanderfolgenden HA-Kerzen gleicher Farbe (UP/DOWN).
-    Dojis/Neutrals werden ignoriert bzw. schließen keinen Run auf (werden dem vorherigen zugeschlagen).
-    Erwartet: require_ha_mode(df) wurde vorher aufgerufen (HA-only).
-    Rückgabe: Liste von Dicts mit start_idx, end_idx, color, run_high, run_low
-    """
-    require_ha_mode(df)
-    if trend_col not in df.columns:
-        raise ValueError(f"build_color_runs: Spalte '{trend_col}' fehlt.")
-
-    runs: List[Dict] = []
-    n = len(df)
-    if n == 0:
-        return runs
-
-    def _finalize(s: int, e: int, color: str):
-        frag = df.loc[s:e, :]
-        runs.append({
-            "id": len(runs),
-            "start_idx": s,
-            "end_idx": e,
-            "color": color,
-            "run_high": float(frag["High"].max()),
-            "run_low": float(frag["Low"].min()),
-            # Platzhalter – füllen wir in annotate_dow_per_run
-            "regime": "RANGE",
-            "hh": False, "hl": False, "lh": False, "ll": False
-        })
-
-    i = 0
-    # erste gültige Farbe finden
-    while i < n and df.at[i, trend_col] not in ("UP", "DOWN"):
-        i += 1
-    if i >= n:
-        return runs
-
-    curr_color = df.at[i, trend_col]
-    run_start = i
-    i += 1
-
-    while i < n:
-        c = df.at[i, trend_col]
-        if c not in ("UP", "DOWN"):
-            # ignoriere Doji/Neutral innerhalb des Runs
-            i += 1
-            continue
-        if c != curr_color:
-            _finalize(run_start, i - 1, curr_color)
-            curr_color = c
-            run_start = i
-        i += 1
-    # letzten Run schließen
-    _finalize(run_start, n - 1, curr_color)
-    return runs
-
-
-def annotate_dow_per_run(runs: List[Dict]) -> List[Dict]:
-    """
-    Wendet die Dow-Regel auf Run-Ebene an.
-    - UP-Run bestätigt Aufwärtstrend, wenn HH & HL relativ zu zuletzt bestätigten Marken.
-    - DOWN-Run bestätigt Abwärtstrend, wenn LL & LH relativ zu zuletzt bestätigten Marken.
-    Aktualisiert run['regime'] in {"UP","DOWN","RANGE"} und Flags hh/hl/lh/ll.
-    """
-    if not runs:
-        return runs
-
-    last_high: Optional[float] = None
-    last_low: Optional[float] = None
-    current_regime: str = "RANGE"
-
-    # Initialisierung mit erstem Run (unbestätigt)
-    r0 = runs[0]
-    last_high = r0["run_high"]
-    last_low = r0["run_low"]
-    r0["regime"] = "RANGE"
-
-    for ri in range(1, len(runs)):
-        r = runs[ri]
-        color = r["color"]
-        rh, rl = r["run_high"], r["run_low"]
-
-        # Reset Flags
-        r["hh"] = r["hl"] = r["lh"] = r["ll"] = False
-        r["regime"] = current_regime  # default: bleibt wie zuvor
-
-        if color == "UP":
-            r["hh"] = (rh > (last_high if last_high is not None else rh - 1e9))
-            r["hl"] = (rl > (last_low  if last_low  is not None else rl - 1e9))
-            if r["hh"] and r["hl"]:
-                r["regime"] = "UP"
-                current_regime = "UP"
-                last_high, last_low = rh, rl   # bestätigte Marken übernehmen
-        elif color == "DOWN":
-            r["ll"] = (rl < (last_low  if last_low  is not None else rl + 1e9))
-            r["lh"] = (rh < (last_high if last_high is not None else rh + 1e9))
-            if r["ll"] and r["lh"]:
-                r["regime"] = "DOWN"
-                current_regime = "DOWN"
-                last_high, last_low = rh, rl
-        # Falls nur eine der Bedingungen erfüllt ist → unbestätigt: regime bleibt alt
-
-    return runs
-def smooth_regimes_by_neighbors(
-    arms,
-    *,
-    lock_conf: float = 0.70,     # ab dieser Confidence bleibt das Mittel unangetastet
-    require_same_geom: bool = False  # optional: nur glätten, wenn die drei Arme geometrisch gleich „steigend/fallend“ sind
-):
-    """
-    Wenn links und rechts dasselbe Regime haben und der mittlere Arm abweicht,
-    wird der mittlere auf das Nachbar-Regime gesetzt – es sei denn, seine
-    eigene Einstufung ist sehr sicher (regime_confidence >= lock_conf).
-
-    Setzt:
-      arm.regime, arm.regime_source += " | smoothed:neighbors"
-    Gibt die Anzahl der Anpassungen zurück.
-    """
-    def _arm_dir(a: "ArmConnection") -> str:
-        sp = float(getattr(a, "start_price", 0.0))
-        ep = float(getattr(a, "end_price",   0.0))
-        return "UP" if ep >= sp else "DOWN"
-
-    changes = 0
-    for i in range(1, len(arms) - 1):
-        left, mid, right = arms[i - 1], arms[i], arms[i + 1]
-        lreg = getattr(left,  "regime", None)
-        mreg = getattr(mid,   "regime", None)
-        rreg = getattr(right, "regime", None)
-
-        if lreg in ("UP","DOWN") and rreg in ("UP","DOWN") and lreg == rreg:
-            if mreg not in ("UP","DOWN") or mreg != lreg:
-                conf = float(getattr(mid, "regime_confidence", 0.0) or 0.0)
-                if conf < lock_conf:
-                    if not require_same_geom or (_arm_dir(left) == _arm_dir(mid) == _arm_dir(right)):
-                        mid.regime = lreg
-                        src = getattr(mid, "regime_source", "unknown")
-                        mid.regime_source = f"{src} | smoothed:neighbors"
-                        changes += 1
-    return changes
-
-def annotate_arms_with_runs(
-    arms: List["ArmConnection"],
-    runs: List[dict],
-    ha_data: Optional[pd.DataFrame] = None,
-    *,
-    geometry_guard_factor: float = 1.25,   # Arm-Delta >= 1.25 * Median-Range -> Geometrie erzwingen
-    neighbor_align_factor: float = 0.60,   # 1-3-Glättung: mittlere Amplitude < 60% der Nachbarn -> angleichen
-    do_neighbor_smoothing: bool = True,
-    use_h1: bool = True,                   # H1 (HH/HL vs. LL/LH) aktivieren
-    h1_min_events: int = 2,
-    h1_dominance: float = 0.60,
-    debug: bool = False,
-    debug_file: Optional[str] = None,
-) -> List["ArmConnection"]:
-    """
-    Weist jedem Arm ein Regime ('UP'/'DOWN') zu.
-
-    Reihenfolge/Logik pro Arm:
-      1) Falls möglich H1 (Pivots, HH/HL vs. LL/LH) -> hat Vorrang.
-      2) Sonst Run-Mehrheit: Gewichte = Summe(High-Low) in überlappendem Fenster.
-      3) Geometrie-Guard: Wenn Mehrheit != Geometrie und |Δ| groß genug,
-         setze auf Geometrie.
-      4) Optional Nachbar-Glättung (1-3) und harte Block-Kohärenz.
-
-    Setzt:
-      arm.regime -> 'UP'/'DOWN'
-      arm.regime_source -> 'H1' | 'runs-majority' | 'geom-override' (+ evtl. Glättungszusätze)
-      arm.regime_confidence -> [0..1]
-    """
-
-    if not arms or not runs:
-        return arms
-
-    # ---------- Hilfen ----------
-    def _clip_idx(i: int, n: int) -> int:
-        return max(0, min(n - 1, int(i)))
-
-    def _overlap(a0: int, a1: int, b0: int, b1: int) -> Tuple[Optional[int], Optional[int]]:
-        s = max(a0, b0)
-        e = min(a1, b1)
-        return (s, e) if s <= e else (None, None)
-
-    def _run_bounds(run: dict) -> Tuple[int, int]:
-        s = run.get("start_idx", run.get("start", run.get("s")))
-        e = run.get("end_idx",   run.get("ende",  run.get("end", run.get("e"))))
-        if isinstance(s, (tuple, list)): s = s[0]
-        if isinstance(e, (tuple, list)): e = e[0]
-        return int(s), int(e)
-
-    def _run_regime(run: dict) -> Optional[str]:
-        r = run.get("regime")
-        if r not in ("UP", "DOWN"):
-            r = run.get("trend", run.get("Trend", run.get("color")))
-        if not r:
-            return None
-        r = str(r).upper()
-        if r in ("UP", "DOWN"):
-            return r
-        if r in ("GREEN", "GRUEN", "GRÜN", "BULL", "BULLISH", "+", "POS"):
-            return "UP"
-        if r in ("RED", "BEAR", "BEARISH", "-", "NEG"):
-            return "DOWN"
-        return None
-
-    def _geom_dir(a: "ArmConnection") -> str:
-        sp = float(getattr(a, "start_price", 0.0))
-        ep = float(getattr(a, "end_price",   0.0))
-        return "UP" if ep > sp else "DOWN"
-
-    # ---------- Vorrechnungen für Gewichte / H1 ----------
-    n_rows = len(ha_data) if isinstance(ha_data, pd.DataFrame) else 0
-    use_weights = bool(n_rows and {"High", "Low"}.issubset(ha_data.columns))
-    hl_all = (ha_data["High"].astype(float) - ha_data["Low"].astype(float)).to_numpy() if use_weights else None
-
-    pivots = []
-    if use_h1 and isinstance(ha_data, pd.DataFrame) and {"High", "Low"}.issubset(ha_data.columns):
-        try:
-            pivots = compute_pivots(ha_data, win=2)
-        except Exception:
-            pivots = []
-
-    def _h1_for_arm(a: "ArmConnection") -> Tuple[Optional[str], float, dict]:
-        """Gibt (regime, confidence, details) zurück."""
-        if not pivots:
-            return None, 0.0, {}
-        i0, i1 = int(a.start_idx), int(a.end_idx)
-        seg = [p for p in pivots if i0 <= p["idx"] <= i1]
-        if len(seg) < 2:
-            return None, 0.0, {}
-
-        hh = hl = lh = ll = 0
-        last_H = None
-        last_L = None
-        for p in seg:
-            if p["type"] == "H":
-                if last_H is not None:
-                    if p["price"] > last_H: hh += 1
-                    else:                   lh += 1
-                last_H = p["price"]
-            else:
-                if last_L is not None:
-                    if p["price"] < last_L: ll += 1
-                    else:                   hl += 1
-                last_L = p["price"]
-
-        up_cnt = hh + hl
-        dn_cnt = ll + lh
-        total = up_cnt + dn_cnt
-        if total >= h1_min_events:
-            if up_cnt >= h1_dominance * total and up_cnt > dn_cnt:
-                conf = up_cnt / total
-                return "UP", conf, {"hh": hh, "hl": hl, "lh": lh, "ll": ll, "total": total}
-            if dn_cnt >= h1_dominance * total and dn_cnt > up_cnt:
-                conf = dn_cnt / total
-                return "DOWN", conf, {"hh": hh, "hl": hl, "lh": lh, "ll": ll, "total": total}
-        return None, 0.0, {"hh": hh, "hl": hl, "lh": lh, "ll": ll, "total": total}
-
-    dbg_lines = []
-
-    # ---------- Hauptschleife über Arme ----------
-    for idx, arm in enumerate(arms, 1):
-        s = int(getattr(arm, "start_idx"))
-        e = int(getattr(arm, "end_idx"))
-        if s > e:
-            s, e = e, s
-
-        # 1) H1 (falls möglich)
-        h1_regime, h1_conf, h1_det = _h1_for_arm(arm)
-
-        # 2) Run-Mehrheit (Gewichte)
-        up_w = 0.0
-        dn_w = 0.0
-        for run in runs:
-            rr = _run_regime(run)
-            if rr not in ("UP", "DOWN"):
-                continue
-            rs, re = _run_bounds(run)
-            os, oe = _overlap(s, e, rs, re)
-            if os is None:
-                continue
-
-            if use_weights:
-                cs = _clip_idx(os, n_rows); ce = _clip_idx(oe, n_rows)
-                w = float(np.nansum(hl_all[cs:ce+1])) if ce >= cs else 0.0
-            else:
-                w = float(oe - os + 1)
-
-            if rr == "UP": up_w += w
-            else:          dn_w += w
-
-        # Mehrheit + Confidence (0..1)
-        if up_w == dn_w == 0.0:
-            majority = None
-            maj_conf = 0.0
-        else:
-            majority = "UP" if up_w > dn_w else "DOWN"
-            maj_conf = abs(up_w - dn_w) / max(up_w + dn_w, 1e-12)
-
-        # 3) Geometrie-Guard
-        geom = _geom_dir(arm)
-        delta = float(getattr(arm, "end_price") - getattr(arm, "start_price"))
-        if use_weights:
-            cs = _clip_idx(s, n_rows); ce = _clip_idx(e, n_rows)
-            med_rng = float(np.nanmedian(hl_all[cs:ce+1])) if ce >= cs else 0.0
-        else:
-            med_rng = 0.0
-
-        # 4) Finale Entscheidung, Priorität: H1 -> Mehrheit -> Geometrie
-        if h1_regime in ("UP", "DOWN"):
-            final = h1_regime
-            src = "H1"
-            conf = max(h1_conf, maj_conf)  # konservativ: best available
-        elif majority in ("UP", "DOWN"):
-            if majority != geom and med_rng > 0.0 and abs(delta) >= geometry_guard_factor * med_rng:
-                final = geom
-                src = "geom-override"
-                conf = 1.0
-            else:
-                final = majority
-                src = "runs-majority"
-                conf = maj_conf
-        else:
-            final = geom
-            src = "geometry"
-            conf = 0.5
-
-        # Setzen
-        setattr(arm, "regime", final)
-        setattr(arm, "regime_source", src)
-        setattr(arm, "regime_confidence", float(conf))
-
-        if debug:
-            dbg_lines.append(
-                f"C{idx}: [{s}-{e}] geom={geom} Δ={delta:.6f} "
-                f"H1={h1_regime} (conf={h1_conf:.2f}, det={h1_det}) "
-                f"runs(up={up_w:.3f}, down={dn_w:.3f}, maj={majority}, maj_conf={maj_conf:.2f}) "
-                f"med_rng={med_rng:.6f} -> final={final} ({src})"
-            )
-
-    # ---------- Nachbar-Glättungen ----------
-    if do_neighbor_smoothing and len(arms) >= 3:
-        try:
-            # weiche 1-3-Glättung (Confidence-basiert)
-            smooth_regimes_by_neighbors(arms, lock_conf=0.80, require_same_geom=False)
-        except Exception:
-            pass
-        try:
-            # harte Block-Kohärenz
-            enforce_block_coherence(arms)
-        except Exception:
-            pass
-
-    # ---------- Debug-Output ----------
-    if debug and dbg_lines:
-        if debug_file:
-            try:
-                with open(debug_file, "a", encoding="utf-8") as f:
-                    f.write("\n".join(dbg_lines) + "\n")
-            except Exception:
-                print("\n".join(dbg_lines))
-        else:
-            print("\n".join(dbg_lines))
-
-    return arms
-
-
-
-def smooth_regimes_by_neighbors(arms, *, lock_conf: float = 0.70, require_same_geom: bool = False):
-    """
-    Soft-Glättung: Wenn Nachbar-Regime (links/rechts) gleich sind und der mittlere Arm
-    abweicht, setze ihn auf das Nachbar-Regime — außer seine eigene
-    regime_confidence ist >= lock_conf. Optional kann require_same_geom erzwingen,
-    dass auch die geometrische Richtung (start/end) übereinstimmen muss.
-    """
-    def _geom_dir(a):
-        sp = float(getattr(a, "start_price", 0.0))
-        ep = float(getattr(a, "end_price",   0.0))
-        return "UP" if ep >= sp else "DOWN"
-
-    changes = 0
-    for i in range(1, len(arms) - 1):
-        left, mid, right = arms[i - 1], arms[i], arms[i + 1]
-        lreg = getattr(left,  "regime", None)
-        mreg = getattr(mid,   "regime", None)
-        rreg = getattr(right, "regime", None)
-        if lreg in ("UP","DOWN") and rreg in ("UP","DOWN") and lreg == rreg:
-            conf = float(getattr(mid, "regime_confidence", 0.0) or 0.0)
-            if conf < lock_conf:
-                if not require_same_geom or (_geom_dir(left) == _geom_dir(mid) == _geom_dir(right)):
-                    if mreg != lreg:
-                        mid.regime = lreg
-                        src = getattr(mid, "regime_source", "unknown")
-                        mid.regime_source = f"{src} | smoothed:neighbors"
-                        changes += 1
-    return changes
-
-
-def enforce_block_coherence(arms):
-    """
-    Harte Block-Glättung: Wenn Nachbar-Regime (links/rechts) gleich sind,
-    setze den mittleren Arm IMMER auf dieses Regime — ohne Confidence-Bedingung.
-    Nutze diese Funktion NACH annotate_arms_with_runs und ggf. nach
-    smooth_regimes_by_neighbors.
-    """
-    changes = 0
-    for i in range(1, len(arms) - 1):
-        left, mid, right = arms[i - 1], arms[i], arms[i + 1]
-        lreg = getattr(left,  "regime", None)
-        rreg = getattr(right, "regime", None)
-        if lreg in ("UP","DOWN") and rreg == lreg:
-            if getattr(mid, "regime", None) != lreg:
-                mid.regime = lreg
-                src = getattr(mid, "regime_source", "unknown")
-                mid.regime_source = f"{src} | enforced:block"
-                changes += 1
-    return changes
-
-# --- NEW: Dow/H1-Tools -------------------------------------------------
-
-def compute_pivots(df: pd.DataFrame, win: int = 2) -> List[dict]:
-    """
-    Markiert Pivot-Highs/-Lows mit einfacher Fractal-Logik.
-    win=2 => Vergleich mit 2 linken und 2 rechten Nachbarn.
-    Rückgabe: Liste von dicts: {"idx": i, "type": "H"|"L", "price": float}
-    """
-    H = df["High"].values
-    L = df["Low"].values
-    n = len(df)
-    pivots = []
-    for i in range(win, n - win):
-        hi_block = H[i-win:i+win+1]
-        lo_block = L[i-win:i+win+1]
-        if H[i] == hi_block.max() and (hi_block.argmax() == win):
-            pivots.append({"idx": i, "type": "H", "price": float(H[i])})
-        if L[i] == lo_block.min() and (lo_block.argmin() == win):
-            pivots.append({"idx": i, "type": "L", "price": float(L[i])})
-    pivots.sort(key=lambda p: p["idx"])
-    return pivots
-
-
-def arm_regime_by_H1(arm, pivots: List[dict],
-                     min_events: int = 2, dominance: float = 0.60) -> Optional[str]:
-    """
-    Bestimmt das Regime eines Arms nach Dow/H1.
-    - Zählt HH/HL und LL/LH nur mit Pivots, die innerhalb [start_idx, end_idx] liegen.
-    - Liefert 'UP'/'DOWN' wenn (HH+HL) bzw. (LL+LH) >= dominance * total
-      und total >= min_events. Sonst None.
-    """
-    i0, i1 = int(arm.start_idx), int(arm.end_idx)
-    seg = [p for p in pivots if i0 <= p["idx"] <= i1]
-    if len(seg) < 2:
-        return None
-
-    hh = hl = lh = ll = 0
-    last_H = None
-    last_L = None
-    for p in seg:
-        if p["type"] == "H":
-            if last_H is not None:
-                if p["price"] > last_H:
-                    hh += 1
-                else:
-                    lh += 1
-            last_H = p["price"]
-        else:  # "L"
-            if last_L is not None:
-                if p["price"] < last_L:
-                    ll += 1
-                else:
-                    hl += 1
-            last_L = p["price"]
-
-    up = hh + hl
-    down = ll + lh
-    total = up + down
-    if total >= min_events:
-        if up >= dominance * total and up > down:
-            return "UP"
-        if down >= dominance * total and down > up:
-            return "DOWN"
-    return None
-
-
-# -----------------------------------------------------------------
-
 
 def debug_luecken_untersuchung(
     arm_i, arm_j, data, d_idx=None, D=None, debug_path=r"D:\TradingBot\output\Luecken_Untersuchung.txt"
@@ -1382,5 +650,4 @@ def dump_plot_arms_to_txt(plot_arms, prefix="Plot-Arms-Dump", filename=r"D:\Trad
             )
         f.write("-" * 50 + "\n")
         f.write(f"Anzahl Plot-Arms: {len(plot_arms)}\n")
-
         f.write("-" * 50 + "\n")
