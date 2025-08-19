@@ -18,7 +18,7 @@ from trend_calculation import (
 
 BASE_OUTPUT_DIR = "D:\\TradingBot\\output"
 
-def debug_verbindungen_liste(verbindungen_liste, serie_typ, file_path):
+def debug_verbindungen_liste(verbindungen_liste, serie_typ, file_path, arm_container=None):
     with open(file_path, "a", encoding="utf-8") as f:
         f.write(f"\n===== Debug-Ausgabe für {serie_typ} =====\n")
         for idx, v in enumerate(verbindungen_liste):
@@ -29,9 +29,29 @@ def debug_verbindungen_liste(verbindungen_liste, serie_typ, file_path):
             f.write(f"Ende={v.get('ende')}\n")
         f.write("===== Ende Debug-Ausgabe =====\n")
 
-def generate_plot_arms(verbindungen_liste, ha_data, serie_typ: str = "unbekannt") -> List[ArmConnection]:
+        # --- NEU: Bounds anhängen (falls vorhanden) ---
+        if arm_container is not None and getattr(arm_container, "debug_mode", True):
+            b = arm_container.bounds
+            src = getattr(arm_container, "bounds_source_arm_num", 0)
+            # Versuche, die letzte validierte Plot-Arm-Nummer zu ermitteln:
+            try:
+                last_valid = None
+                for i, a in enumerate(getattr(arm_container, "plot_arms", []), start=1):
+                    if getattr(a, "validated", False):
+                        last_valid = i
+                if last_valid is not None:
+                    f.write("\n[OUTPUT] Plot-Arm-Bounds:\n")
+                    f.write(
+                        f"C{last_valid}_BOUNDS: upper={float(b.upper):.5f}, "
+                        f"lower={float(b.lower):.5f}, source_arm={int(src)}, validated=True\n"
+                    )
+            except Exception:
+                pass
+
+
+def generate_plot_arms(verbindungen_liste, ha_data, debug_file=None, serie_typ="C-Serie", arm_container=None) -> List[ArmConnection]:
     debug_file = os.path.join(BASE_OUTPUT_DIR, "C-Serie-Debug-Ausgaben5.txt")
-    debug_verbindungen_liste(verbindungen_liste, serie_typ + " (PlotArms Eingang)", debug_file)
+    debug_verbindungen_liste(verbindungen_liste, serie_typ + " (PlotArms Eingang)", debug_file, arm_container=arm_container)
 
     plot_arms = []
     for v in verbindungen_liste:
