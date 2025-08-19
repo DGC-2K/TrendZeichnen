@@ -1,4 +1,4 @@
-﻿import os
+import os
 from datetime import datetime, timedelta
 from typing import List
 
@@ -95,13 +95,14 @@ def generate_plot_arms(verbindungen_liste, ha_data, serie_typ: str = "unbekannt"
         for i, arm in enumerate(plot_arms):
             f.write(
                 f"  C{i+2}: Kerzen {arm.start_idx}-{arm.end_idx}, Richtung: {arm.direction}, "
-                f"StartPreis: {arm.start_price:.2f}, EndPreis: {arm.end_price:.2f}, "
+                f"StartPreis: {arm.start_price:.5f}, EndPreis: {arm.end_price:.5f}, "
                 f"validated: {arm.validated}"
             )
             f.write("\n")
         f.write("-" * 50 + "\n")
 
     return plot_arms
+
 
 def plot_ha_with_trend_arms(
     ha_data, arm_container, ticker, interval,
@@ -131,8 +132,10 @@ def plot_ha_with_trend_arms(
                width=width, color=candle_color, edgecolor='black', linewidth=0.5, zorder=2)
         ax.vlines(dates[i], float(row['Low']), float(row['High']), 
                  color='black', linewidth=0.8, zorder=1)
-        ax.text(dates[i], float(row['High']) * 1.0005, str(ha_data.index[i]), 
-               ha='center', va='bottom', fontsize=8, color='black', zorder=3)
+        # Offset relativ zur Preisspanne statt Multiplikation, und innerhalb clippen
+        price_range = float(ha_data['High'].max() - ha_data['Low'].min()) or 1.0
+        ax.text(dates[i], float(row['High']) + 0.01 * price_range, str(ha_data.index[i]),
+                ha='center', va='bottom', fontsize=8, color='black', zorder=3, clip_on=True)
 
     # --- Originelle Trendarme: A1, A2, ... ---
     if show_plot_a and hasattr(arm_container, 'arms'):
@@ -182,6 +185,36 @@ def plot_ha_with_trend_arms(
                     ax.text(mid_x, mid_y, label, fontsize=11, color='blue', 
                             fontweight='bold', zorder=11)
                     verbindung_count += 1
+
+    # --- Fibonacci 38,2% Linien je Arm ---
+    try:
+        arms_for_fib = [arm for arm in getattr(arm_container, "arms", []) if getattr(arm, "validated", False)]
+        if not arms_for_fib:
+            arms_for_fib = list(getattr(arm_container, "arms", []))
+
+        for arm in arms_for_fib:
+            if not (0 <= arm.start_idx < len(ha_data) and 0 <= arm.end_idx < len(ha_data)):
+                continue
+            arm_slice = ha_data.iloc[arm.start_idx:arm.end_idx + 1]
+            if arm_slice.empty or not {'High','Low'}.issubset(arm_slice.columns):
+                continue
+            arm_high = float(arm_slice['High'].max())
+            arm_low  = float(arm_slice['Low'].min())
+            span = arm_high - arm_low
+            if span <= 0:
+                continue
+            if arm.direction == 'UP':
+                fib382 = arm_high - 0.382 * span
+            elif arm.direction == 'DOWN':
+                fib382 = arm_low + 0.382 * span
+            else:
+                continue
+            x_start = dates[arm.start_idx]
+            x_end   = dates[arm.end_idx]
+            ax.hlines(fib382, x_start, x_end, linestyles='dashdot', linewidth=1.6, color='orange', zorder=8)
+            ax.text(x_end, fib382, "38,2%", va='bottom', ha='right', fontsize=9, color='orange', zorder=9)
+    except Exception:
+        pass
 
     # Restliche Plot-Einstellungen
     ax.xaxis.set_major_locator(MinuteLocator(interval=15))
@@ -246,7 +279,7 @@ def save_to_csv(ha_data: pd.DataFrame, arm_container: ArmContainer, output_dir_p
     
     def german_format(x):
         try:
-            return f"{float(x):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            return f"{float(x):,.5f}".replace(",", "X").replace(".", ",").replace("X", ".")
         except (ValueError, TypeError):
             if x is not None and str(x).strip() != '':
                 return "0,000"
@@ -294,35 +327,38 @@ def save_to_csv(ha_data: pd.DataFrame, arm_container: ArmContainer, output_dir_p
 
 def save_ha_kerzen_csv(ha_data: pd.DataFrame, output_dir_param: str, ticker: str) -> str:
     os.makedirs(output_dir_param, exist_ok=True)
-    
-    def german_format(x):
-        try:
-            return f"{float(x):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        except (ValueError, TypeError):
-            if x is not None and str(x).strip() != '':
-                return "0,000"
-            return ''
-    
+
     if 'Zeit' not in ha_data.columns:
         raise ValueError("Die Spalte 'Zeit' muss im ha_data DataFrame vorhanden sein, um die CSV korrekt zu formatieren.")
-    
+
+    ha_data = ha_data.copy()
     ha_data['Zeit'] = pd.to_datetime(ha_data['Zeit'])
 
     csv_data = pd.DataFrame({
         'Kerze_Nr': ha_data.index.values,
         'Zeit': ha_data['Zeit'].dt.strftime('%d.%m.%Y %H:%M'),
-        'Open': ha_data['Open'].apply(german_format),
-        'High': ha_data['High'].apply(german_format),
-        'Low': ha_data['Low'].apply(german_format),
-        'Close': ha_data['Close'].apply(german_format),
+        # WICHTIG: numerisch lassen, NICHT über german_format in Strings umwandeln
+        'Open':  pd.to_numeric(ha_data['Open'],  errors='coerce'),
+        'High':  pd.to_numeric(ha_data['High'],  errors='coerce'),
+        'Low':   pd.to_numeric(ha_data['Low'],   errors='coerce'),
+        'Close': pd.to_numeric(ha_data['Close'], errors='coerce'),
     })
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     csv_path = os.path.join(output_dir_param, f"HA_Kerzen_{ticker}_{timestamp}.csv")
-    
-    csv_data.to_csv(csv_path, index=False, sep=';', decimal=',', encoding='utf-8-sig')
+
+    # Feste Präzision für alle Floats; Dezimalkomma für DE
+    csv_data.to_csv(
+        csv_path,
+        index=False,
+        sep=';',
+        decimal=',',
+        encoding='utf-8-sig',
+        float_format='%.5f'
+    )
     print(f"HA-Kerzen wurden in {csv_path} gespeichert.")
     return csv_path
+
 
 def dump_plot_arms_to_txt(plot_arms: List[ArmConnection], file_path: str = "output/plot_arms_debug.txt"):
     import datetime

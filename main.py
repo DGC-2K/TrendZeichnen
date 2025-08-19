@@ -14,9 +14,9 @@ from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 
 # --- KONFIGURATION ---
-TICKER = "ETH-USD"
-INTERVAL = "2m"
-HOURS_TO_ANALYZE = 5
+TICKER = "EURUSD=X"
+INTERVAL = "1m"
+HOURS_TO_ANALYZE = 3
 
 def main():
     print("\n" + "="*60)
@@ -74,10 +74,6 @@ def main():
 
         # 5. Verbindungslinien berechnen
         verbindungen_liste = berechne_verbindungslinien(validated_arms, ha_data)
-
-        print("\n[DEBUG] Verbindungslinien (C-Serie):")
-        for idx, verbindung in enumerate(verbindungen_liste, start=1):
-            print(f"C{idx}: {verbindung}")
 
         # 6. Plot-Arms generieren & zuweisen
         arm_container.plot_arms = generate_plot_arms(verbindungen_liste, ha_data)
